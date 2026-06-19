@@ -1,71 +1,145 @@
 import { useEffect, useState } from 'react'
 import axios from 'axios'
-import { CheckCircle2, LoaderCircle, ServerCrash } from 'lucide-react'
+import {
+  FileSearch,
+  LoaderCircle,
+  Mic,
+  ServerCrash,
+  Sparkles,
+  Target,
+} from 'lucide-react'
+import { ResumeUpload } from './components/ResumeUpload'
+import { HowItWorks } from './components/HowItWorks'
 import './App.css'
-
-type HealthResponse = {
-  status: string
-  message: string
-}
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
 
+const FEATURES = [
+  {
+    icon: FileSearch,
+    label: 'Resume Parser',
+    desc: 'Extracts and analyses your resume content',
+  },
+  {
+    icon: Target,
+    label: 'ATS Scoring',
+    desc: 'See how you rank against applicant filters',
+  },
+  {
+    icon: Sparkles,
+    label: 'JD Matching',
+    desc: 'Tailor your resume to any job description',
+  },
+  {
+    icon: Mic,
+    label: 'Interview Prep',
+    desc: 'AI-generated Q&A based on your resume',
+  },
+]
+
 function App() {
-  const [health, setHealth] = useState<HealthResponse | null>(null)
-  const [error, setError] = useState('')
-  const [loading, setLoading] = useState(true)
+  const [connected, setConnected] = useState<boolean | null>(null)
 
   useEffect(() => {
-    async function checkBackend() {
-      try {
-        const response = await axios.get<HealthResponse>(
-          `${apiBaseUrl}/api/health`,
-        )
-        setHealth(response.data)
-      } catch {
-        setError('Could not connect to the FastAPI backend.')
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    checkBackend()
+    axios
+      .get(`${apiBaseUrl}/api/health`)
+      .then(() => setConnected(true))
+      .catch(() => setConnected(false))
   }, [])
 
+  const loading = connected === null
+
   return (
-    <main className="app-shell">
-      <section className="hero-panel" aria-labelledby="page-title">
-        <div className="eyebrow">AI Resume & Interview Copilot</div>
-        <h1 id="page-title">HireReady</h1>
-        <p className="intro">
-          A full-stack project for tailoring resumes to job descriptions and
-          preparing smarter interview answers.
-        </p>
+    <div className="page">
+      <div className="blob blob--teal" aria-hidden="true" />
+      <div className="blob blob--blue" aria-hidden="true" />
 
-        <div className="status-panel">
-          {loading && (
-            <div className="status-row">
-              <LoaderCircle className="spin" aria-hidden="true" />
-              <span>Checking backend connection...</span>
-            </div>
-          )}
-
-          {!loading && health && (
-            <div className="status-row success">
-              <CheckCircle2 aria-hidden="true" />
-              <span>Backend status: {health.message}</span>
-            </div>
-          )}
-
-          {!loading && error && (
-            <div className="status-row error">
-              <ServerCrash aria-hidden="true" />
-              <span>{error}</span>
-            </div>
+      <nav className="nav">
+        <div className="nav-brand">
+          <div className="brand-mark">HR</div>
+          <span>HireReady</span>
+        </div>
+        <div
+          className={`status-pill ${
+            loading
+              ? 'status-pill--loading'
+              : connected
+                ? 'status-pill--online'
+                : 'status-pill--offline'
+          }`}
+        >
+          {loading ? (
+            <>
+              <LoaderCircle size={11} className="spin" aria-hidden="true" />
+              Connecting
+            </>
+          ) : connected ? (
+            <span className="status-dot" aria-label="Connected" />
+          ) : (
+            <>
+              <span className="status-dot" aria-hidden="true" />
+              Offline
+            </>
           )}
         </div>
-      </section>
-    </main>
+      </nav>
+
+      <main className="main">
+        <div className="hero">
+          <div className="hero-badge">
+            <Sparkles size={13} aria-hidden="true" />
+            Powered by AI
+          </div>
+          <h1 className="hero-title">
+            Land your
+            <br />
+            <span className="gradient-text">dream job</span>
+            <br />
+            faster.
+          </h1>
+          <p className="hero-sub">
+            Upload your resume and let AI score it against job descriptions,
+            flag gaps, and prepare you for interviews.
+          </p>
+          <ul className="feature-list" aria-label="Features">
+            {FEATURES.map(({ icon: Icon, label, desc }) => (
+              <li key={label} className="feature-item">
+                <div className="feature-icon-wrap" aria-hidden="true">
+                  <Icon size={15} />
+                </div>
+                <div>
+                  <span className="feature-label">{label}</span>
+                  <span className="feature-desc">{desc}</span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div className="upload-card">
+          <div className="upload-card-header">
+            <h2 className="upload-card-title">Upload your resume</h2>
+            <p className="upload-card-sub">PDF or DOCX · 5 MB max</p>
+          </div>
+
+          {!loading && !connected ? (
+            <div className="offline-banner" role="alert">
+              <ServerCrash size={20} aria-hidden="true" />
+              <div>
+                <p className="offline-title">Backend offline</p>
+                <p className="offline-hint">
+                  Run <code>./dev.sh</code> from the project root
+                </p>
+              </div>
+            </div>
+          ) : (
+            <ResumeUpload />
+          )}
+        </div>
+      </main>
+
+      <HowItWorks />
+    </div>
   )
 }
 

@@ -1,5 +1,7 @@
 from fastapi import APIRouter
 
+from app.api.resume import router as resume_router
+
 router = APIRouter()
 
 
@@ -9,3 +11,6 @@ def health_check():
         "status": "ok",
         "message": "HireReady backend is running",
     }
+
+
+router.include_router(resume_router, prefix="/resume", tags=["resume"])

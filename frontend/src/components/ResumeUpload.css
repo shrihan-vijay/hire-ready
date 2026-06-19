@@ -1,0 +1,256 @@
+.ru-root {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+/* ── Drop zone ─────────────────────────────────────────── */
+
+.ru-zone {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 36px 24px;
+  border: 2px dashed #cbd5e1;
+  border-radius: 12px;
+  background: #f8fafc;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+  user-select: none;
+  outline: none;
+}
+
+.ru-zone:hover:not(.ru-zone--has-file),
+.ru-zone:focus-visible:not(.ru-zone--has-file) {
+  border-color: #0f766e;
+  background: #f0fdfa;
+}
+
+.ru-zone--dragover {
+  border-style: solid;
+  border-color: #0f766e;
+  background: #f0fdfa;
+}
+
+.ru-zone--has-file {
+  cursor: default;
+  border-style: solid;
+  border-color: #0f766e;
+  background: #f0fdfa;
+  padding: 18px 20px;
+}
+
+.ru-input {
+  display: none;
+}
+
+/* ── Empty state ───────────────────────────────────────── */
+
+.ru-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.ru-cloud-icon {
+  width: 42px;
+  height: 42px;
+  color: #94a3b8;
+  transition: color 0.15s, transform 0.15s;
+}
+
+.ru-zone:hover .ru-cloud-icon,
+.ru-cloud-icon--active {
+  color: #0f766e;
+  transform: translateY(-2px);
+}
+
+.ru-drop-title {
+  margin: 4px 0 0;
+  color: #334155;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.ru-drop-sub {
+  margin: 0;
+  color: #64748b;
+  font-size: 14px;
+}
+
+.ru-browse {
+  color: #0f766e;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.ru-formats {
+  margin: 4px 0 0;
+  color: #94a3b8;
+  font-size: 12px;
+  letter-spacing: 0.01em;
+}
+
+/* ── File selected state ───────────────────────────────── */
+
+.ru-file-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.ru-file-icon {
+  width: 30px;
+  height: 30px;
+  color: #0f766e;
+  flex: 0 0 auto;
+}
+
+.ru-file-meta {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ru-file-name {
+  color: #1e293b;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ru-file-size {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.ru-remove-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: #fee2e2;
+  color: #b91c1c;
+  cursor: pointer;
+  flex: 0 0 auto;
+  transition: background 0.12s;
+}
+
+.ru-remove-btn:hover {
+  background: #fecaca;
+}
+
+/* ── Error banner ──────────────────────────────────────── */
+
+.ru-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 13px;
+}
+
+/* ── Upload button ─────────────────────────────────────── */
+
+.ru-upload-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 24px;
+  border: none;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #0f766e 0%, #0891b2 100%);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s, filter 0.15s;
+  letter-spacing: -0.01em;
+}
+
+.ru-upload-btn:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.ru-upload-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ── Success state ─────────────────────────────────────── */
+
+.ru-success {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 28px;
+  padding: 18px 20px;
+  border: 1px solid #bbf7d0;
+  border-radius: 10px;
+  background: #f0fdf4;
+}
+
+.ru-success-icon {
+  width: 30px;
+  height: 30px;
+  color: #166534;
+  flex: 0 0 auto;
+}
+
+.ru-success-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.ru-success-title {
+  margin: 0;
+  color: #166534;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.ru-success-file {
+  margin: 3px 0 0;
+  color: #15803d;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ru-again-btn {
+  padding: 7px 14px;
+  border: 1.5px solid #166534;
+  border-radius: 6px;
+  background: transparent;
+  color: #166534;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s;
+}
+
+.ru-again-btn:hover {
+  background: #dcfce7;
+}
