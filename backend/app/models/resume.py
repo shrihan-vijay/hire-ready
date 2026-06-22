@@ -5,5 +5,6 @@ class ResumeUploadResponse(BaseModel):
     filename: str
     size: int
     word_count: int
+    chunk_count: int
     sections: list[str]
     message: str

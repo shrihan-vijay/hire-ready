@@ -3,6 +3,8 @@ import uuid
 
 from fastapi import HTTPException, UploadFile
 
+from app.services.chunker_service import chunk_text
+from app.services.embedder_service import embed_and_store
 from app.services.parser_service import detect_sections, extract_text
 
 UPLOAD_DIR = "uploads"
@@ -31,21 +33,24 @@ async def save_resume(file: UploadFile) -> dict:
     with open(filepath, "wb") as f:
         f.write(content)
 
-    # Extract text and save alongside the original file
+    # Parse
     try:
         text = extract_text(filepath, file.content_type)
     except Exception:
         text = ""
 
-    text_path = os.path.join(UPLOAD_DIR, f"{file_id}.txt")
-    with open(text_path, "w", encoding="utf-8") as f:
+    with open(os.path.join(UPLOAD_DIR, f"{file_id}.txt"), "w", encoding="utf-8") as f:
         f.write(text)
+
+    # Chunk + embed
+    chunks = chunk_text(text)
+    chunk_count = embed_and_store(file_id, file.filename or saved_filename, chunks)
 
     return {
         "filename": file.filename or saved_filename,
         "file_id": file_id,
-        "saved_as": saved_filename,
         "size": len(content),
         "word_count": len(text.split()),
+        "chunk_count": chunk_count,
         "sections": detect_sections(text),
     }

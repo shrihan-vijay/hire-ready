@@ -15,6 +15,7 @@ type UploadState = 'idle' | 'dragover' | 'uploading' | 'success' | 'error'
 interface ParseResult {
   filename: string
   word_count: number
+  chunk_count: number
   sections: string[]
 }
 

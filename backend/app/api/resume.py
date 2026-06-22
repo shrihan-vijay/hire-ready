@@ -13,6 +13,7 @@ async def upload_resume(file: UploadFile = File(...)):
         filename=result["filename"],
         size=result["size"],
         word_count=result["word_count"],
+        chunk_count=result["chunk_count"],
         sections=result["sections"],
-        message="Resume uploaded and parsed successfully",
+        message="Resume uploaded, parsed, and embedded successfully",
     )
