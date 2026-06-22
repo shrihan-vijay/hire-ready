@@ -12,6 +12,12 @@ import './ResumeUpload.css'
 
 type UploadState = 'idle' | 'dragover' | 'uploading' | 'success' | 'error'
 
+interface ParseResult {
+  filename: string
+  word_count: number
+  sections: string[]
+}
+
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
 const ALLOWED = new Set([
   'application/pdf',
@@ -29,16 +35,12 @@ export function ResumeUpload() {
   const [file, setFile] = useState<File | null>(null)
   const [state, setState] = useState<UploadState>('idle')
   const [errorMsg, setErrorMsg] = useState('')
-  const [uploadedName, setUploadedName] = useState('')
+  const [result, setResult] = useState<ParseResult | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   function pick(f: File) {
     const err = validate(f)
-    if (err) {
-      setErrorMsg(err)
-      setState('error')
-      return
-    }
+    if (err) { setErrorMsg(err); setState('error'); return }
     setFile(f)
     setErrorMsg('')
     setState('idle')
@@ -76,15 +78,14 @@ export function ResumeUpload() {
     const form = new FormData()
     form.append('file', file)
     try {
-      const res = await axios.post<{ filename: string }>(
+      const res = await axios.post<ParseResult>(
         `${apiBaseUrl}/api/resume/upload`,
         form,
       )
-      setUploadedName(res.data.filename)
+      setResult(res.data)
       setState('success')
     } catch (err: unknown) {
-      const detail =
-        axios.isAxiosError(err) ? err.response?.data?.detail : undefined
+      const detail = axios.isAxiosError(err) ? err.response?.data?.detail : undefined
       setErrorMsg(detail ?? 'Upload failed. Please try again.')
       setState('error')
     }
@@ -94,18 +95,36 @@ export function ResumeUpload() {
     setFile(null)
     setErrorMsg('')
     setState('idle')
-    setUploadedName('')
+    setResult(null)
     if (inputRef.current) inputRef.current.value = ''
   }
 
-  if (state === 'success') {
+  if (state === 'success' && result) {
     return (
-      <div className="ru-success">
-        <CheckCircle2 className="ru-success-icon" aria-hidden="true" />
-        <div className="ru-success-text">
-          <p className="ru-success-title">Resume uploaded successfully</p>
-          <p className="ru-success-file">{uploadedName}</p>
+      <div className="ru-success-card">
+        <div className="ru-success-header">
+          <CheckCircle2 size={20} className="ru-success-icon" aria-hidden="true" />
+          <div className="ru-success-text">
+            <p className="ru-success-title">Parsed successfully</p>
+            <p className="ru-success-file">{result.filename}</p>
+          </div>
+          <span className="ru-word-count">{result.word_count.toLocaleString()} words</span>
         </div>
+
+        {result.sections.length > 0 && (
+          <div className="ru-sections">
+            <p className="ru-sections-label">Sections detected</p>
+            <div className="ru-sections-grid">
+              {result.sections.map((s) => (
+                <span key={s} className="ru-section-badge">
+                  <CheckCircle2 size={11} aria-hidden="true" />
+                  {s}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
         <button className="ru-again-btn" onClick={reset}>
           Upload another
         </button>
@@ -122,7 +141,7 @@ export function ResumeUpload() {
         onClick={() => !file && inputRef.current?.click()}
         onDrop={onDrop}
         onDragOver={onDragOver}
-        onDragLeave={() => setState(file ? 'idle' : 'idle')}
+        onDragLeave={() => setState('idle')}
         role={file ? undefined : 'button'}
         tabIndex={file ? undefined : 0}
         onKeyDown={(e) => e.key === 'Enter' && !file && inputRef.current?.click()}
@@ -155,15 +174,9 @@ export function ResumeUpload() {
             <FileText className="ru-file-icon" aria-hidden="true" />
             <div className="ru-file-meta">
               <span className="ru-file-name">{file.name}</span>
-              <span className="ru-file-size">
-                {(file.size / 1024).toFixed(0)} KB
-              </span>
+              <span className="ru-file-size">{(file.size / 1024).toFixed(0)} KB</span>
             </div>
-            <button
-              className="ru-remove-btn"
-              onClick={removeFile}
-              aria-label="Remove file"
-            >
+            <button className="ru-remove-btn" onClick={removeFile} aria-label="Remove file">
               <X size={15} aria-hidden="true" />
             </button>
           </div>
@@ -183,15 +196,9 @@ export function ResumeUpload() {
         onClick={upload}
       >
         {state === 'uploading' ? (
-          <>
-            <Loader2 size={17} className="spin" aria-hidden="true" />
-            Uploading…
-          </>
+          <><Loader2 size={17} className="spin" aria-hidden="true" /> Parsing…</>
         ) : (
-          <>
-            <UploadCloud size={17} aria-hidden="true" />
-            Upload Resume
-          </>
+          <><UploadCloud size={17} aria-hidden="true" /> Upload &amp; Parse</>
         )}
       </button>
     </div>

@@ -199,55 +199,100 @@
 
 /* ── Success state ─────────────────────────────────────── */
 
-.ru-success {
+.ru-success-card {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 14px;
-  margin-top: 28px;
-  padding: 18px 20px;
+  margin-top: 20px;
+  padding: 20px;
   border: 1px solid #bbf7d0;
-  border-radius: 10px;
+  border-radius: 14px;
   background: #f0fdf4;
 }
 
-.ru-success-icon {
-  width: 30px;
-  height: 30px;
-  color: #166534;
-  flex: 0 0 auto;
+.ru-success-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
-.ru-success-text {
-  flex: 1;
-  min-width: 0;
+.ru-success-icon {
+  color: #166534;
+  flex: 0 0 auto;
 }
 
 .ru-success-title {
   margin: 0;
   color: #166534;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
 }
 
 .ru-success-file {
-  margin: 3px 0 0;
+  margin: 2px 0 0;
   color: #15803d;
-  font-size: 13px;
+  font-size: 12px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+.ru-word-count {
+  margin-left: auto;
+  padding: 4px 10px;
+  border-radius: 99px;
+  background: #dcfce7;
+  border: 1px solid #bbf7d0;
+  color: #166534;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.ru-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ru-sections-label {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  color: #0f766e;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.ru-sections-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ru-section-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 99px;
+  background: #dcfce7;
+  border: 1px solid #bbf7d0;
+  color: #166534;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .ru-again-btn {
+  align-self: flex-start;
   padding: 7px 14px;
   border: 1.5px solid #166534;
-  border-radius: 6px;
+  border-radius: 8px;
   background: transparent;
   color: #166534;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  white-space: nowrap;
   transition: background 0.12s;
 }
 

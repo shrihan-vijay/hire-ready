@@ -12,5 +12,7 @@ async def upload_resume(file: UploadFile = File(...)):
     return ResumeUploadResponse(
         filename=result["filename"],
         size=result["size"],
-        message="Resume uploaded successfully",
+        word_count=result["word_count"],
+        sections=result["sections"],
+        message="Resume uploaded and parsed successfully",
     )
