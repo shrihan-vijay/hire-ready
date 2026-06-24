@@ -58,6 +58,7 @@
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
   border-bottom: 1px solid rgba(15, 23, 42, 0.07);
+  position: relative;
 }
 
 .nav-brand {
@@ -70,19 +71,38 @@
   letter-spacing: -0.02em;
 }
 
-.brand-mark {
+/* ── Nav tabs ──────────────────────────────────────────── */
+
+.nav-tabs {
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
+  gap: 2px;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.nav-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
   border-radius: 8px;
-  background: linear-gradient(135deg, #0f766e 0%, #0891b2 100%);
-  color: #fff;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: -0.2px;
-  flex: 0 0 auto;
+  font-size: 13px;
+  font-weight: 600;
+  color: #64748b;
+  text-decoration: none;
+  transition: background 0.12s, color 0.12s;
+}
+
+.nav-tab:hover {
+  background: rgba(99, 102, 241, 0.07);
+  color: #6366f1;
+}
+
+.nav-tab--active {
+  background: rgba(99, 102, 241, 0.1);
+  color: #6366f1;
 }
 
 /* ── Status pill ───────────────────────────────────────── */
@@ -323,5 +343,84 @@
 
   .upload-card {
     padding: 24px;
+  }
+}
+
+/* ── Score guide section ────────────────────────────────── */
+
+.score-guide {
+  position: relative;
+  z-index: 1;
+  padding: 80px 40px;
+  max-width: 900px;
+  margin: 0 auto;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.score-guide-title {
+  margin: 0 0 12px;
+  font-size: 28px;
+  font-weight: 800;
+  color: #0f172a;
+  letter-spacing: -0.02em;
+}
+
+.score-guide-sub {
+  margin: 0 0 36px;
+  font-size: 15px;
+  color: #6b7280;
+  line-height: 1.6;
+  max-width: 600px;
+}
+
+.score-guide-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+
+.score-guide-card {
+  padding: 20px 22px;
+  border-radius: 14px;
+  border: 1.5px solid;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.score-guide-card-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.score-guide-range {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.score-guide-label {
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.score-guide-desc {
+  margin: 0;
+  font-size: 13px;
+  color: #374151;
+  line-height: 1.65;
+}
+
+@media (max-width: 600px) {
+  .score-guide-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .score-guide {
+    padding: 60px 24px;
   }
 }

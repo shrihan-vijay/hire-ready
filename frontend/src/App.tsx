@@ -1,15 +1,21 @@
 import { useEffect, useState } from 'react'
+import { BrowserRouter, NavLink, Route, Routes } from 'react-router-dom'
 import axios from 'axios'
 import {
   FileSearch,
+  Home,
   LoaderCircle,
   Mic,
   ServerCrash,
   Sparkles,
   Target,
+  UserCircle2,
 } from 'lucide-react'
 import { ResumeUpload } from './components/ResumeUpload'
 import { HowItWorks } from './components/HowItWorks'
+import { Logo } from './components/Logo'
+import { ProfilePage } from './pages/ProfilePage'
+import { InterviewPage } from './pages/InterviewPage'
 import './App.css'
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
@@ -37,53 +43,65 @@ const FEATURES = [
   },
 ]
 
-function App() {
-  const [connected, setConnected] = useState<boolean | null>(null)
+const NAV_TABS = [
+  { to: '/',          label: 'Home',          icon: Home },
+  { to: '/interview', label: 'Interview Prep', icon: Mic },
+  { to: '/profile',   label: 'Profile',        icon: UserCircle2 },
+]
 
-  useEffect(() => {
-    axios
-      .get(`${apiBaseUrl}/api/health`)
-      .then(() => setConnected(true))
-      .catch(() => setConnected(false))
-  }, [])
-
+function Nav({ connected }: { connected: boolean | null }) {
   const loading = connected === null
-
   return (
-    <div className="page">
-      <div className="blob blob--teal" aria-hidden="true" />
-      <div className="blob blob--blue" aria-hidden="true" />
+    <nav className="nav">
+      <div className="nav-brand">
+        <Logo size={30} />
+        <span>HireReady</span>
+      </div>
 
-      <nav className="nav">
-        <div className="nav-brand">
-          <div className="brand-mark">HR</div>
-          <span>HireReady</span>
-        </div>
-        <div
-          className={`status-pill ${
-            loading
-              ? 'status-pill--loading'
-              : connected
-                ? 'status-pill--online'
-                : 'status-pill--offline'
-          }`}
-        >
-          {loading ? (
-            <>
-              <LoaderCircle size={11} className="spin" aria-hidden="true" />
-              Connecting
-            </>
-          ) : connected ? (
-            <span className="status-dot" aria-label="Connected" />
-          ) : (
-            <>
-              <span className="status-dot" aria-hidden="true" />
-              Offline
-            </>
-          )}
-        </div>
-      </nav>
+      <div className="nav-tabs">
+        {NAV_TABS.map(({ to, label, icon: Icon }) => (
+          <NavLink
+            key={to}
+            to={to}
+            end={to === '/'}
+            className={({ isActive }) => `nav-tab ${isActive ? 'nav-tab--active' : ''}`}
+          >
+            <Icon size={14} aria-hidden="true" />
+            {label}
+          </NavLink>
+        ))}
+      </div>
 
+      <div
+        className={`status-pill ${
+          loading
+            ? 'status-pill--loading'
+            : connected
+              ? 'status-pill--online'
+              : 'status-pill--offline'
+        }`}
+      >
+        {loading ? (
+          <>
+            <LoaderCircle size={11} className="spin" aria-hidden="true" />
+            Connecting
+          </>
+        ) : connected ? (
+          <span className="status-dot" aria-label="Connected" />
+        ) : (
+          <>
+            <span className="status-dot" aria-hidden="true" />
+            Offline
+          </>
+        )}
+      </div>
+    </nav>
+  )
+}
+
+function HomePage({ connected }: { connected: boolean | null }) {
+  return (
+    <>
       <main className="main">
         <div className="hero">
           <div className="hero-badge">
@@ -122,7 +140,7 @@ function App() {
             <p className="upload-card-sub">PDF or DOCX · 5 MB max</p>
           </div>
 
-          {!loading && !connected ? (
+          {connected === false ? (
             <div className="offline-banner" role="alert">
               <ServerCrash size={20} aria-hidden="true" />
               <div>
@@ -139,7 +157,87 @@ function App() {
       </main>
 
       <HowItWorks />
-    </div>
+
+      <section className="score-guide" id="score-guide">
+        <h2 className="score-guide-title">What does your ATS score mean?</h2>
+        <p className="score-guide-sub">
+          ATS (Applicant Tracking Systems) filter resumes before a human ever sees them.
+          Your score reflects how well your resume's language and skills align with the job description.
+        </p>
+        <div className="score-guide-grid">
+          {[
+            {
+              range: '0 – 40',
+              label: 'Needs work',
+              color: '#ef4444',
+              bg: '#fee2e2',
+              border: '#fecaca',
+              desc: "Major gaps between your resume and this role. The JD likely contains many skills and keywords that don't appear in your resume at all. Significant tailoring needed before applying.",
+            },
+            {
+              range: '41 – 60',
+              label: 'Partial match',
+              color: '#f59e0b',
+              bg: '#fef3c7',
+              border: '#fde68a',
+              desc: "Some overlap exists but key requirements are missing. You may have the experience — it's just not phrased in a way ATS systems recognise. Rewrite to mirror the JD's exact language.",
+            },
+            {
+              range: '61 – 79',
+              label: 'Good match',
+              color: '#3b82f6',
+              bg: '#dbeafe',
+              border: '#bfdbfe',
+              desc: "Strong alignment with the role. A few targeted additions — filling in the flagged missing skills and mirroring more of the JD's phrasing — could push you into the top tier of applicants.",
+            },
+            {
+              range: '80 – 100',
+              label: 'Excellent match',
+              color: '#22c55e',
+              bg: '#dcfce7',
+              border: '#bbf7d0',
+              desc: 'Your resume speaks directly to this role. The keywords, skills, and experience align tightly with what the employer asked for. Apply with confidence — your resume will clear the filter.',
+            },
+          ].map(({ range, label, color, bg, border, desc }) => (
+            <div key={range} className="score-guide-card" style={{ borderColor: border, background: bg }}>
+              <div className="score-guide-card-header">
+                <span className="score-guide-range" style={{ color }}>{range}</span>
+                <span className="score-guide-label" style={{ color }}>{label}</span>
+              </div>
+              <p className="score-guide-desc">{desc}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+    </>
+  )
+}
+
+function App() {
+  const [connected, setConnected] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    axios
+      .get(`${apiBaseUrl}/api/health`)
+      .then(() => setConnected(true))
+      .catch(() => setConnected(false))
+  }, [])
+
+  return (
+    <BrowserRouter>
+      <div className="page">
+        <div className="blob blob--teal" aria-hidden="true" />
+        <div className="blob blob--blue" aria-hidden="true" />
+
+        <Nav connected={connected} />
+
+        <Routes>
+          <Route path="/" element={<HomePage connected={connected} />} />
+          <Route path="/interview" element={<InterviewPage />} />
+          <Route path="/profile" element={<ProfilePage />} />
+        </Routes>
+      </div>
+    </BrowserRouter>
   )
 }
 

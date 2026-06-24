@@ -7,16 +7,26 @@ import {
   Loader2,
   UploadCloud,
   X,
+  Sparkles,
 } from 'lucide-react'
 import './ResumeUpload.css'
 
 type UploadState = 'idle' | 'dragover' | 'uploading' | 'success' | 'error'
+type AnalyzeState = 'idle' | 'analyzing' | 'done' | 'error'
 
 interface ParseResult {
   filename: string
+  file_id: string
   word_count: number
   chunk_count: number
   sections: string[]
+}
+
+interface AnalyzeResult {
+  score: number
+  matched_skills: string[]
+  missing_skills: string[]
+  summary: string
 }
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
@@ -32,19 +42,49 @@ function validate(f: File): string {
   return ''
 }
 
+function ScoreRing({ score }: { score: number }) {
+  const r = 36
+  const circ = 2 * Math.PI * r
+  const fill = circ - (score / 100) * circ
+  const color = score >= 70 ? '#22c55e' : score >= 45 ? '#f59e0b' : '#ef4444'
+  return (
+    <svg width="96" height="96" viewBox="0 0 96 96">
+      <circle cx="48" cy="48" r={r} fill="none" stroke="#e5e7eb" strokeWidth="8" />
+      <circle
+        cx="48" cy="48" r={r} fill="none"
+        stroke={color} strokeWidth="8"
+        strokeDasharray={circ}
+        strokeDashoffset={fill}
+        strokeLinecap="round"
+        transform="rotate(-90 48 48)"
+        style={{ transition: 'stroke-dashoffset 1s ease' }}
+      />
+      <text x="48" y="53" textAnchor="middle" fontSize="18" fontWeight="700" fill={color}>
+        {score}
+      </text>
+    </svg>
+  )
+}
+
 export function ResumeUpload() {
   const [file, setFile] = useState<File | null>(null)
-  const [state, setState] = useState<UploadState>('idle')
+  const [uploadState, setUploadState] = useState<UploadState>('idle')
   const [errorMsg, setErrorMsg] = useState('')
-  const [result, setResult] = useState<ParseResult | null>(null)
+  const [parseResult, setParseResult] = useState<ParseResult | null>(null)
+
+  const [jd, setJd] = useState('')
+  const [analyzeState, setAnalyzeState] = useState<AnalyzeState>('idle')
+  const [analyzeError, setAnalyzeError] = useState('')
+  const [analyzeResult, setAnalyzeResult] = useState<AnalyzeResult | null>(null)
+
   const inputRef = useRef<HTMLInputElement>(null)
 
   function pick(f: File) {
     const err = validate(f)
-    if (err) { setErrorMsg(err); setState('error'); return }
+    if (err) { setErrorMsg(err); setUploadState('error'); return }
     setFile(f)
     setErrorMsg('')
-    setState('idle')
+    setUploadState('idle')
   }
 
   function onInputChange(e: ChangeEvent<HTMLInputElement>) {
@@ -56,67 +96,88 @@ export function ResumeUpload() {
     e.preventDefault()
     const f = e.dataTransfer.files?.[0]
     if (f) pick(f)
-    else setState('idle')
+    else setUploadState('idle')
   }
 
   function onDragOver(e: DragEvent<HTMLDivElement>) {
     e.preventDefault()
-    setState('dragover')
+    setUploadState('dragover')
   }
 
   function removeFile(e: React.MouseEvent) {
     e.stopPropagation()
     setFile(null)
     setErrorMsg('')
-    setState('idle')
+    setUploadState('idle')
     if (inputRef.current) inputRef.current.value = ''
   }
 
   async function upload() {
     if (!file) return
-    setState('uploading')
+    setUploadState('uploading')
     setErrorMsg('')
     const form = new FormData()
     form.append('file', file)
     try {
-      const res = await axios.post<ParseResult>(
-        `${apiBaseUrl}/api/resume/upload`,
-        form,
-      )
-      setResult(res.data)
-      setState('success')
+      const res = await axios.post<ParseResult>(`${apiBaseUrl}/api/resume/upload`, form)
+      setParseResult(res.data)
+      setUploadState('success')
     } catch (err: unknown) {
       const detail = axios.isAxiosError(err) ? err.response?.data?.detail : undefined
       setErrorMsg(detail ?? 'Upload failed. Please try again.')
-      setState('error')
+      setUploadState('error')
+    }
+  }
+
+  async function analyze() {
+    if (!parseResult || !jd.trim()) return
+    setAnalyzeState('analyzing')
+    setAnalyzeError('')
+    setAnalyzeResult(null)
+    try {
+      const res = await axios.post<AnalyzeResult>(`${apiBaseUrl}/api/resume/analyze`, {
+        file_id: parseResult.file_id,
+        job_description: jd,
+      })
+      setAnalyzeResult(res.data)
+      setAnalyzeState('done')
+    } catch (err: unknown) {
+      const detail = axios.isAxiosError(err) ? err.response?.data?.detail : undefined
+      setAnalyzeError(detail ?? 'Analysis failed. Please try again.')
+      setAnalyzeState('error')
     }
   }
 
   function reset() {
     setFile(null)
     setErrorMsg('')
-    setState('idle')
-    setResult(null)
+    setUploadState('idle')
+    setParseResult(null)
+    setJd('')
+    setAnalyzeState('idle')
+    setAnalyzeError('')
+    setAnalyzeResult(null)
     if (inputRef.current) inputRef.current.value = ''
   }
 
-  if (state === 'success' && result) {
+  if (uploadState === 'success' && parseResult) {
     return (
       <div className="ru-success-card">
+        {/* Parse result header */}
         <div className="ru-success-header">
           <CheckCircle2 size={20} className="ru-success-icon" aria-hidden="true" />
           <div className="ru-success-text">
             <p className="ru-success-title">Parsed successfully</p>
-            <p className="ru-success-file">{result.filename}</p>
+            <p className="ru-success-file">{parseResult.filename}</p>
           </div>
-          <span className="ru-word-count">{result.word_count.toLocaleString()} words</span>
+          <span className="ru-word-count">{parseResult.word_count.toLocaleString()} words</span>
         </div>
 
-        {result.sections.length > 0 && (
+        {parseResult.sections.length > 0 && (
           <div className="ru-sections">
             <p className="ru-sections-label">Sections detected</p>
             <div className="ru-sections-grid">
-              {result.sections.map((s) => (
+              {parseResult.sections.map((s) => (
                 <span key={s} className="ru-section-badge">
                   <CheckCircle2 size={11} aria-hidden="true" />
                   {s}
@@ -126,14 +187,99 @@ export function ResumeUpload() {
           </div>
         )}
 
-        <button className="ru-again-btn" onClick={reset}>
-          Upload another
+        {/* JD input */}
+        {analyzeState !== 'done' && (
+          <div className="ru-jd-section">
+            <p className="ru-jd-label">Paste a job description to get your ATS score</p>
+            <textarea
+              className="ru-jd-textarea"
+              placeholder="Paste the full job description here…"
+              value={jd}
+              onChange={(e) => setJd(e.target.value)}
+              rows={6}
+            />
+            {analyzeError && (
+              <div className="ru-error" role="alert">
+                <AlertCircle size={15} aria-hidden="true" />
+                <span>{analyzeError}</span>
+              </div>
+            )}
+            <button
+              className="ru-analyze-btn"
+              disabled={!jd.trim() || analyzeState === 'analyzing'}
+              onClick={analyze}
+            >
+              {analyzeState === 'analyzing' ? (
+                <><Loader2 size={17} className="spin" aria-hidden="true" /> Analyzing…</>
+              ) : (
+                <><Sparkles size={17} aria-hidden="true" /> Analyze Match</>
+              )}
+            </button>
+          </div>
+        )}
+
+        {/* ATS results */}
+        {analyzeState === 'done' && analyzeResult && (
+          <div className="ru-results">
+            <div className="ru-results-top">
+              <div className="ru-score-wrap">
+                <ScoreRing score={analyzeResult.score} />
+                <p className="ru-score-label">ATS Score</p>
+                <a
+                  className="ru-score-guide-link"
+                  href="#score-guide"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    document.getElementById('score-guide')?.scrollIntoView({ behavior: 'smooth' })
+                  }}
+                >
+                  What does this mean?
+                </a>
+              </div>
+              <p className="ru-summary">{analyzeResult.summary}</p>
+            </div>
+
+            <div className="ru-skills-grid">
+              {analyzeResult.matched_skills.length > 0 && (
+                <div className="ru-skills-col">
+                  <p className="ru-skills-heading ru-skills-heading--match">Matched</p>
+                  <div className="ru-skills-list">
+                    {analyzeResult.matched_skills.map((s) => (
+                      <span key={s} className="ru-skill-badge ru-skill-badge--match">
+                        <CheckCircle2 size={11} aria-hidden="true" /> {s}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {analyzeResult.missing_skills.length > 0 && (
+                <div className="ru-skills-col">
+                  <p className="ru-skills-heading ru-skills-heading--miss">Missing</p>
+                  <div className="ru-skills-list">
+                    {analyzeResult.missing_skills.map((s) => (
+                      <span key={s} className="ru-skill-badge ru-skill-badge--miss">
+                        <X size={11} aria-hidden="true" /> {s}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <button className="ru-again-btn" onClick={() => { setAnalyzeState('idle'); setAnalyzeResult(null); setJd('') }}>
+              Try another job description
+            </button>
+          </div>
+        )}
+
+        <button className="ru-reset-link" onClick={reset}>
+          Upload a different resume
         </button>
       </div>
     )
   }
 
-  const isDragover = state === 'dragover'
+  const isDragover = uploadState === 'dragover'
 
   return (
     <div className="ru-root">
@@ -142,7 +288,7 @@ export function ResumeUpload() {
         onClick={() => !file && inputRef.current?.click()}
         onDrop={onDrop}
         onDragOver={onDragOver}
-        onDragLeave={() => setState('idle')}
+        onDragLeave={() => setUploadState('idle')}
         role={file ? undefined : 'button'}
         tabIndex={file ? undefined : 0}
         onKeyDown={(e) => e.key === 'Enter' && !file && inputRef.current?.click()}
@@ -193,13 +339,13 @@ export function ResumeUpload() {
 
       <button
         className="ru-upload-btn"
-        disabled={!file || state === 'uploading'}
+        disabled={!file || uploadState === 'uploading'}
         onClick={upload}
       >
-        {state === 'uploading' ? (
-          <><Loader2 size={17} className="spin" aria-hidden="true" /> Parsing…</>
+        {uploadState === 'uploading' ? (
+          <><Loader2 size={17} className="spin" aria-hidden="true" /> Uploading…</>
         ) : (
-          <><UploadCloud size={17} aria-hidden="true" /> Upload &amp; Parse</>
+          <><UploadCloud size={17} aria-hidden="true" /> Upload &amp; Analyze</>
         )}
       </button>
     </div>

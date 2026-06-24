@@ -44,12 +44,14 @@ def embed_and_store(file_id: str, filename: str, chunks: list[str]) -> int:
 
 
 def query_resume(file_id: str, query: str, n_results: int = 5) -> list[str]:
-    """
-    Retrieve the most semantically relevant chunks for a query.
-    Used by the ATS scorer — pass the job description as the query.
-    """
+    collection = _get_collection()
+    existing = collection.get(where={"file_id": file_id})
+    count = len(existing["ids"])
+    if count == 0:
+        return []
+    n_results = min(n_results, count)
     query_embedding = _get_model().encode([query]).tolist()
-    results = _get_collection().query(
+    results = collection.query(
         query_embeddings=query_embedding,
         n_results=n_results,
         where={"file_id": file_id},

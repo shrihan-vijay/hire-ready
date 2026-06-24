@@ -1,0 +1,47 @@
+Shrihan Vijay
+571-356-0880 | shrihanvijay06@gmail.com | Linkedin | Github
+Education
+University of Virginia Charlottesville, VA
+Bachelor of Science in Computer Science Aug. 2024 – Dec 2027
+Experience
+GuidePoint Security May 2026 – Present
+Cybersecurity Intern Remote
+• Deploying and administering enterprise security lab environments using Ludus, WireGuard, Active Directory,
+Windows Server, and Kali Linux to simulate real-world attack and defense scenarios
+• Supporting security operations workflows involving network monitoring, system administration, threat detection,
+and security infrastructure management within a SOC environment
+U.S. Department of the Treasury May 2024 – Aug. 2024
+Software Engineer Intern Washington, D.C.
+• Developed Python and SQL workflow automation systems that reduced multi-bureau approval turnaround time by
+20%
+• Improved document classification accuracy by 30% by training machine learning pipelines using scikit-learn,
+TF-IDF vectorization, and logistic regression models
+• Built user-facing analytics dashboards and REST API integrations using JavaScript and SQL databases to support
+operational tracking tools for 40+ users
+Projects
+HireReady June 2026 – Present
+• Building a full-stack AI application using React, TypeScript, FastAPI, and PostgreSQL to automate resume
+evaluation and job application workflows
+• Implementing Retrieval-Augmented Generation (RAG), prompt engineering, ATS keyword extraction, and semantic
+search techniques to power personalized resume feedback and job-matching recommendations
+Audia – Social Music Discovery Platform Mar. 2026 – Present
+• Developed a full-stack social music platform using React, Node.js, Express, Firebase, and Spotify APIs for music
+discovery and user engagement
+• Built RESTful backend services, integrated third-party APIs, and managed user data while collaborating within an
+Agile software development team
+Deep Learning Pneumonia Detection Research June 2025 – Aug. 2025
+• Developed a computer vision pipeline using CNNs, TensorFlow, and Keras to analyze 1,000+ chest X-ray images
+with 95% diagnostic accuracy
+• Applied transfer learning across 200+ pretrained models to improve reliability, generalization, and classification
+performance
+4me – Internship & Program Matching Platform May 2025 – Aug. 2025
+• Co-founded and developed a swipe-based internship and program matching platform using React, Flask
+microservices, SQL, and REST APIs
+• Built authentication, recommendation, resume upload, and dashboard functionality while integrating frontend and
+backend services
+Technical Skills
+Languages: Python, Java, SQL, JavaScript, TypeScript
+Artificial Intelligence: OpenAI, Claude, Prompt Engineering, LLMs, Retrieval-Augmented Generation, Model
+Context Protocol, AI Agents, TensorFlow, scikit-learn, CNNs
+Frameworks & Databases: React, FastAPI, Express, Node.js, Next.js, REST APIs, PostgreSQL, MySQL
+Tools: AWS, Docker, Kubernetes, Git/GitHub, JUnit, Splunk, Kali Linux, Ansible, Terraform
