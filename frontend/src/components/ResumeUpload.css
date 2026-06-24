@@ -471,6 +471,33 @@
   color: #991b1b;
 }
 
+.ru-results-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.ru-prep-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 16px;
+  border: none;
+  border-radius: 9px;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.15s, transform 0.1s;
+}
+
+.ru-prep-btn:hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
+
 .ru-reset-link {
   background: none;
   border: none;

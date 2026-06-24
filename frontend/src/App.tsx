@@ -16,6 +16,7 @@ import { HowItWorks } from './components/HowItWorks'
 import { Logo } from './components/Logo'
 import { ProfilePage } from './pages/ProfilePage'
 import { InterviewPage } from './pages/InterviewPage'
+import { ResumeProvider } from './context/ResumeContext'
 import './App.css'
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
@@ -225,6 +226,7 @@ function App() {
 
   return (
     <BrowserRouter>
+    <ResumeProvider>
       <div className="page">
         <div className="blob blob--teal" aria-hidden="true" />
         <div className="blob blob--blue" aria-hidden="true" />
@@ -237,6 +239,7 @@ function App() {
           <Route path="/profile" element={<ProfilePage />} />
         </Routes>
       </div>
+    </ResumeProvider>
     </BrowserRouter>
   )
 }

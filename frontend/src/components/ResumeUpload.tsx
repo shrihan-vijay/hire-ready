@@ -1,33 +1,22 @@
 import { ChangeEvent, DragEvent, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
 import {
   AlertCircle,
   CheckCircle2,
   FileText,
   Loader2,
+  Mic,
   UploadCloud,
   X,
   Sparkles,
 } from 'lucide-react'
+import { useResume } from '../context/ResumeContext'
+import type { ParseResult, AnalyzeResult } from '../context/ResumeContext'
 import './ResumeUpload.css'
 
-type UploadState = 'idle' | 'dragover' | 'uploading' | 'success' | 'error'
+type UploadState = 'idle' | 'dragover' | 'uploading' | 'error'
 type AnalyzeState = 'idle' | 'analyzing' | 'done' | 'error'
-
-interface ParseResult {
-  filename: string
-  file_id: string
-  word_count: number
-  chunk_count: number
-  sections: string[]
-}
-
-interface AnalyzeResult {
-  score: number
-  matched_skills: string[]
-  missing_skills: string[]
-  summary: string
-}
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
 const ALLOWED = new Set([
@@ -67,16 +56,15 @@ function ScoreRing({ score }: { score: number }) {
 }
 
 export function ResumeUpload() {
+  const navigate = useNavigate()
+  const { parseResult, setParseResult, analyzeResult, setAnalyzeResult, jd, setJd, clearAll } = useResume()
+
+  // Ephemeral state — does not need to survive navigation
   const [file, setFile] = useState<File | null>(null)
   const [uploadState, setUploadState] = useState<UploadState>('idle')
   const [errorMsg, setErrorMsg] = useState('')
-  const [parseResult, setParseResult] = useState<ParseResult | null>(null)
-
-  const [jd, setJd] = useState('')
-  const [analyzeState, setAnalyzeState] = useState<AnalyzeState>('idle')
+  const [analyzeState, setAnalyzeState] = useState<AnalyzeState>(analyzeResult ? 'done' : 'idle')
   const [analyzeError, setAnalyzeError] = useState('')
-  const [analyzeResult, setAnalyzeResult] = useState<AnalyzeResult | null>(null)
-
   const inputRef = useRef<HTMLInputElement>(null)
 
   function pick(f: File) {
@@ -121,11 +109,15 @@ export function ResumeUpload() {
     try {
       const res = await axios.post<ParseResult>(`${apiBaseUrl}/api/resume/upload`, form)
       setParseResult(res.data)
-      setUploadState('success')
+      setAnalyzeState('idle')
+      setAnalyzeResult(null)
+      setJd('')
     } catch (err: unknown) {
       const detail = axios.isAxiosError(err) ? err.response?.data?.detail : undefined
       setErrorMsg(detail ?? 'Upload failed. Please try again.')
       setUploadState('error')
+    } finally {
+      setUploadState('idle')
     }
   }
 
@@ -133,7 +125,6 @@ export function ResumeUpload() {
     if (!parseResult || !jd.trim()) return
     setAnalyzeState('analyzing')
     setAnalyzeError('')
-    setAnalyzeResult(null)
     try {
       const res = await axios.post<AnalyzeResult>(`${apiBaseUrl}/api/resume/analyze`, {
         file_id: parseResult.file_id,
@@ -152,18 +143,16 @@ export function ResumeUpload() {
     setFile(null)
     setErrorMsg('')
     setUploadState('idle')
-    setParseResult(null)
-    setJd('')
     setAnalyzeState('idle')
     setAnalyzeError('')
-    setAnalyzeResult(null)
+    clearAll()
     if (inputRef.current) inputRef.current.value = ''
   }
 
-  if (uploadState === 'success' && parseResult) {
+  // Show success card if we have a parse result (persists across navigation)
+  if (parseResult) {
     return (
       <div className="ru-success-card">
-        {/* Parse result header */}
         <div className="ru-success-header">
           <CheckCircle2 size={20} className="ru-success-icon" aria-hidden="true" />
           <div className="ru-success-text">
@@ -187,8 +176,8 @@ export function ResumeUpload() {
           </div>
         )}
 
-        {/* JD input */}
-        {analyzeState !== 'done' && (
+        {/* JD input — hide when results are showing */}
+        {analyzeState !== 'done' && !analyzeResult && (
           <div className="ru-jd-section">
             <p className="ru-jd-label">Paste a job description to get your ATS score</p>
             <textarea
@@ -219,7 +208,7 @@ export function ResumeUpload() {
         )}
 
         {/* ATS results */}
-        {analyzeState === 'done' && analyzeResult && (
+        {analyzeResult && (
           <div className="ru-results">
             <div className="ru-results-top">
               <div className="ru-score-wrap">
@@ -266,9 +255,18 @@ export function ResumeUpload() {
               )}
             </div>
 
-            <button className="ru-again-btn" onClick={() => { setAnalyzeState('idle'); setAnalyzeResult(null); setJd('') }}>
-              Try another job description
-            </button>
+            <div className="ru-results-actions">
+              <button className="ru-again-btn" onClick={() => { setAnalyzeState('idle'); setAnalyzeResult(null); setJd('') }}>
+                Try another JD
+              </button>
+              <button
+                className="ru-prep-btn"
+                onClick={() => navigate('/interview', { state: { file_id: parseResult.file_id, job_description: jd } })}
+              >
+                <Mic size={15} aria-hidden="true" />
+                Prep for this interview
+              </button>
+            </div>
           </div>
         )}
 
