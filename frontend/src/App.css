@@ -105,6 +105,44 @@
   color: #6366f1;
 }
 
+/* ── Nav right cluster ─────────────────────────────────── */
+
+.nav-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.nav-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  flex-shrink: 0;
+  transition: opacity 0.15s;
+}
+
+.nav-avatar:hover {
+  opacity: 0.85;
+}
+
+/* ── Auth loading splash ────────────────────────────────── */
+
+.auth-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  color: #6366f1;
+}
+
 /* ── Status pill ───────────────────────────────────────── */
 
 .status-pill {

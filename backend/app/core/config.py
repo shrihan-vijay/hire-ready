@@ -13,3 +13,5 @@ FRONTEND_URLS = [
     "http://localhost:5174",
     "http://127.0.0.1:5174",
 ]
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
