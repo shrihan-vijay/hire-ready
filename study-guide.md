@@ -6,20 +6,21 @@ Full-stack AI resume copilot. Upload a resume, get an ATS score against a job de
 
 ## Tech Stack
 
-| Layer          | Technology              | Purpose                                       |
-|----------------|-------------------------|-----------------------------------------------|
-| Frontend       | React + TypeScript      | UI, routing, state management                 |
-| Build tool     | Vite                    | Dev server + bundler                          |
-| Routing        | React Router v7         | Client-side navigation (Home, Interview, Profile) |
-| State          | React Context           | Persist resume/analysis state across pages    |
-| HTTP client    | axios                   | Frontend → backend requests                   |
-| Backend        | FastAPI (Python)        | API server, business logic                    |
-| Validation     | Pydantic                | Request/response type enforcement             |
-| PDF parser     | pdfplumber              | Extracts text from PDF files                  |
-| DOCX parser    | python-docx             | Extracts text from Word files                 |
-| Embeddings     | sentence-transformers   | Local model — converts text → vectors         |
-| Vector store   | ChromaDB                | Persists and searches resume chunk embeddings |
-| LLM            | Groq (llama-3.3-70b)    | ATS scoring, question generation, feedback    |
+| Layer        | Technology            | Purpose                                                       |
+| ------------ | --------------------- | ------------------------------------------------------------- |
+| Frontend     | React + TypeScript    | UI, routing, state management                                 |
+| Build tool   | Vite                  | Dev server + bundler                                          |
+| Routing      | React Router v7       | Client-side navigation (Home, Interview, Profile)             |
+| State        | React Context         | Persist resume/analysis state across pages                    |
+| HTTP client  | axios                 | Frontend → backend requests                                   |
+| Auth         | Supabase              | User accounts, JWT sessions, hosted PostgreSQL + file storage |
+| Backend      | FastAPI (Python)      | API server, business logic                                    |
+| Validation   | Pydantic              | Request/response type enforcement                             |
+| PDF parser   | pdfplumber            | Extracts text from PDF files                                  |
+| DOCX parser  | python-docx           | Extracts text from Word files                                 |
+| Embeddings   | sentence-transformers | Local model — converts text → vectors                         |
+| Vector store | ChromaDB              | Persists and searches resume chunk embeddings                 |
+| LLM          | Groq (llama-3.3-70b)  | ATS scoring, question generation, feedback                    |
 
 ---
 
@@ -45,14 +46,23 @@ backend/app/
 frontend/src/
   context/
     ResumeContext.tsx   ← Global state: parseResult, analyzeResult, jd
+    AuthContext.tsx     ← Auth state: user, session, signIn, signUp, signOut
+  lib/
+    supabase.ts         ← Supabase client singleton (reads from .env)
   components/
     ResumeUpload.tsx    ← Upload widget + JD input + ATS results
+    AuthGate.tsx        ← Sign-in/sign-up page shown at route /
     HowItWorks.tsx      ← Interactive 4-step tutorial section
     Logo.tsx            ← SVG logo component
   pages/
     InterviewPage.tsx   ← Behavioral + role-specific interview prep
-    ProfilePage.tsx     ← Placeholder (auth coming)
-  App.tsx               ← Router, nav tabs, score guide section
+    ProfilePage.tsx     ← Account info + sign out (sign-in form if guest)
+  App.tsx               ← Router, auth gate, nav with user avatar, score guide
+
+backend/app/core/
+  config.py             ← Env vars (now includes SUPABASE_URL, SUPABASE_ANON_KEY)
+  supabase.py           ← Supabase client singleton
+  auth.py               ← FastAPI dependencies: get_current_user, require_user
 ```
 
 **The key rule:** route handlers are thin — they receive the request, call a service, return the response. All logic lives in services. Swap S3 for local disk → change only `resume_service.py`. Swap Pinecone for ChromaDB → change only `embedder_service.py`. Swap OpenAI for Groq → change only `llm_service.py`.
@@ -123,7 +133,7 @@ Return AnalyzeResponse → frontend shows:
 ```
 
 **Why RAG instead of pasting the whole resume?**
-The JD is embedded into a vector and compared against resume chunk vectors. Only the *most relevant* parts of the resume go into the LLM prompt — lower cost, better focus, and it scales to long documents.
+The JD is embedded into a vector and compared against resume chunk vectors. Only the _most relevant_ parts of the resume go into the LLM prompt — lower cost, better focus, and it scales to long documents.
 
 ---
 
@@ -132,9 +142,11 @@ The JD is embedded into a vector and compared against resume chunk vectors. Only
 Two modes. One always works without a JD, one is personalised.
 
 ### Behavioral Practice
+
 Questions are **hardcoded on the frontend** — 15 questions across 5 categories (Self, Conflict, Leadership, Growth, Motivation). No API call, instant load. User expands a question, types an answer, requests AI feedback.
 
 ### Role-Specific
+
 ```
 User clicks "Prep for this interview" after ATS analysis
         │  (React Router passes { file_id, job_description } as state)
@@ -154,6 +166,7 @@ Frontend renders question cards (All view or One-by-one view)
 ```
 
 ### AI Feedback on Answers
+
 ```
 User types answer → clicks "Get AI Feedback"
         │
@@ -176,20 +189,20 @@ Feedback displayed below the textarea
 
 ## Embeddings: Local vs Cloud
 
-An embedding is a list of numbers representing the *meaning* of text. Two sentences with similar meaning → vectors that are close together, even if they share no words.
+An embedding is a list of numbers representing the _meaning_ of text. Two sentences with similar meaning → vectors that are close together, even if they share no words.
 
 ```
 "5 years of Python experience"        → [0.12, -0.87, 0.34, ...]
 "built Python microservices since 2019" → [0.13, -0.85, 0.31, ...]  ← close!
 ```
 
-| | Local (sentence-transformers) | Cloud (OpenAI text-embedding-3-small) |
-|---|---|---|
-| Cost | Free | ~$0.00002/1K tokens |
-| Dimensions | 384 | 1536 |
-| Privacy | Data stays on server | Data leaves your machine |
-| Setup | Download once (~90MB) | API key required |
-| Swap effort | One line in `embedder_service.py` | One line in `embedder_service.py` |
+|             | Local (sentence-transformers)     | Cloud (OpenAI text-embedding-3-small) |
+| ----------- | --------------------------------- | ------------------------------------- |
+| Cost        | Free                              | ~$0.00002/1K tokens                   |
+| Dimensions  | 384                               | 1536                                  |
+| Privacy     | Data stays on server              | Data leaves your machine              |
+| Setup       | Download once (~90MB)             | API key required                      |
+| Swap effort | One line in `embedder_service.py` | One line in `embedder_service.py`     |
 
 ---
 
@@ -198,6 +211,7 @@ An embedding is a list of numbers representing the *meaning* of text. Two senten
 Stores vectors so they can be searched later. Lives at `backend/chroma_db/` — SQLite-backed, persists across restarts.
 
 Each chunk stored as:
+
 - `id`: `{file_id}_{chunk_index}`
 - `document`: raw text
 - `embedding`: 384 floats
@@ -209,12 +223,12 @@ The `where={"file_id": file_id}` filter in every query ensures you only search t
 
 ## Groq vs Other LLM Options
 
-| Provider   | Model               | Cost        | Key needed? |
-|------------|---------------------|-------------|-------------|
-| **Groq**   | llama-3.3-70b       | Free tier   | Yes (free)  |
-| OpenAI     | gpt-4o-mini         | ~$0.001/req | Yes (paid)  |
-| Anthropic  | claude-haiku-4-5    | ~$0.001/req | Yes (paid)  |
-| Ollama     | llama3 (local)      | Free        | No          |
+| Provider  | Model            | Cost        | Key needed? |
+| --------- | ---------------- | ----------- | ----------- |
+| **Groq**  | llama-3.3-70b    | Free tier   | Yes (free)  |
+| OpenAI    | gpt-4o-mini      | ~$0.001/req | Yes (paid)  |
+| Anthropic | claude-haiku-4-5 | ~$0.001/req | Yes (paid)  |
+| Ollama    | llama3 (local)   | Free        | No          |
 
 Groq is used now because it's free and fast. Switching to OpenAI or Anthropic for production is a single import change in `llm_service.py` and `interview_service.py` — nothing else in the codebase is aware of which provider is running.
 
@@ -222,73 +236,136 @@ Groq is used now because it's free and fast. Switching to OpenAI or Anthropic fo
 
 ---
 
-## Local Storage vs S3
+## Authentication Flow
 
-Files currently write to `backend/uploads/`. For production:
-
-- **Never** one S3 bucket per user (AWS has soft limits, and it's an antipattern)
-- **One bucket + a database table:**
+Supabase is a hosted backend-as-a-service built on PostgreSQL. It provides auth, a relational database, and file storage — all from one service. For auth, it runs its own Auth server alongside your database.
 
 ```
-s3://hire-ready-uploads/resumes/<uuid>.pdf
-
-PostgreSQL — files table:
-  file_id | user_id  | s3_key                   | uploaded_at
-  uuid1   | user_abc | resumes/uuid1.pdf        | 2026-06-19
+User submits email + password on AuthGate (route /)
+        │
+        ▼  supabase.auth.signInWithPassword()
+Supabase Auth server
+  - Checks credentials against internal auth.users table
+  - Returns a JWT (JSON Web Token) — a signed string encoding
+    user ID, email, and expiry
+  - Supabase JS client stores JWT in localStorage automatically
+        │
+        ▼
+AuthContext.onAuthStateChange fires
+  - Sets user + session in React state
+  - axios.defaults.headers.common['Authorization'] = `Bearer <token>`
+  - All future API calls now carry the token automatically
+        │
+        ▼
+React Router sees user is non-null → redirects from / to /home
+        │
+        ▼  Any protected API call (e.g. POST /api/resume/upload)
+FastAPI — get_current_user dependency (auth.py)
+  - Extracts Bearer token from Authorization header
+  - Calls supabase.auth.get_user(token) — Supabase verifies signature
+  - Returns { id, email } if valid; raises 401 if forged/expired
 ```
 
-S3 is dumb storage — it has no concept of users. The association lives in the relational DB. You query the DB for the key, then fetch from S3. The only code change: two lines in `resume_service.py`.
+**Why the JWT is safe to pass around:**
+The token is cryptographically signed by Supabase using a secret key only they hold. Your backend never sees the user's password — only the signed token. If anyone tampers with it, the signature check fails and it's rejected.
+
+**Session refresh:**
+JWTs expire after 1 hour. The Supabase JS client silently refreshes them using a refresh token (also in localStorage). `onAuthStateChange` fires on each refresh and updates the axios header.
+
+**Guest mode:**
+"Continue without signing in" stores a `guestMode` flag in `sessionStorage`. The app treats this as authed for routing purposes. Signing out clears the flag and returns to the auth gate.
+
+**Backend auth dependencies (auth.py):**
+
+- `get_current_user` — optional auth. Returns user dict or `None`. Existing endpoints stay backward-compatible.
+- `require_user` — throws 401 if no valid token. Used when an endpoint must be locked to signed-in users.
+
+---
+
+## Local Storage vs Supabase Storage
+
+Files currently write to `backend/uploads/`. For production, Supabase replaces both S3 and a separate database:
+
+- **Supabase Storage** = S3-compatible object store (same concept as AWS S3, built in)
+- **Supabase PostgreSQL** = relational database (built in, same project)
+- No separate AWS account needed
+
+```
+Supabase Storage bucket: resumes/<uuid>.pdf
+
+Supabase PostgreSQL — files table:
+  file_id | user_id  | storage_key              | uploaded_at
+  uuid1   | user_abc | resumes/uuid1.pdf        | 2026-06-25
+```
+
+Storage is dumb — it has no concept of users. The association lives in the PostgreSQL table. You query the DB for the key, then fetch from Storage. The only code change: two lines in `resume_service.py`.
 
 ---
 
 ## Interview Talking Points
 
 **"Walk me through a user request end to end."**
+
 > The user uploads a PDF. React sends it as multipart/form-data to `POST /api/resume/upload`. The service layer validates type and size, saves with a UUID filename, extracts text using pdfplumber, splits into 200-word overlapping chunks, embeds each chunk with a local sentence-transformers model, and stores the vectors in ChromaDB tagged with a file_id. When the user pastes a job description, we embed that too, query ChromaDB for the most semantically similar resume chunks, and send them to Groq to produce an ATS score and gap analysis. The same file_id and JD then flow to the interview prep page, where Groq generates role-specific questions grounded in both the resume and the JD.
 
 **"What is RAG and why does this project use it?"**
+
 > RAG is Retrieval-Augmented Generation — instead of sending a full document to the LLM every time, you index it once as vectors and retrieve only the relevant parts at query time. Here, the resume is chunked and embedded on upload. At analysis time, the job description is embedded and the closest resume chunks are retrieved via cosine similarity. Only those chunks go into the Groq prompt. This keeps costs low, avoids context window limits, and lets the LLM focus on the most relevant content.
 
 **"Why local embeddings instead of OpenAI?"**
+
 > Local embeddings with sentence-transformers cost nothing and keep user data on the server. The model downloads once (~90 MB) and runs in-process as a lazy singleton. Quality is very good for semantic similarity on short resume chunks. Switching to OpenAI's text-embedding-3-small in production is one line in `embedder_service.py` — nothing else in the codebase knows which model produced the vectors.
 
 **"How does state persist when the user navigates between pages?"**
+
 > React Router unmounts page components on navigation, which normally destroys local state. We store the persistent data — parse result, ATS analysis, job description — in a React Context (`ResumeContext`) mounted above the router in the component tree. Context survives navigation because it's never unmounted. Ephemeral state like drag/drop and error messages stays local to the component since it doesn't need to persist.
 
+**"How does authentication work in this app?"**
+
+> Authentication is handled by Supabase. On sign-in, Supabase's auth server verifies the credentials and returns a JWT. The Supabase JS client stores the JWT in localStorage and auto-refreshes it before expiry. Our AuthContext listens for auth state changes and sets the JWT as the default Authorization header on every axios request — so all API calls carry it automatically without any component needing to think about it. On the backend, a FastAPI dependency (`get_current_user` in `auth.py`) extracts the token and calls `supabase.auth.get_user()` to verify the signature. If the token is forged or expired, Supabase rejects it and we return a 401. The current endpoints support optional auth — they still work without a token — but `require_user` is available to lock down endpoints that must be tied to an account.
+
 **"How would you scale this for real users?"**
-> Files move from local disk to S3 (one line in `resume_service.py`). ChromaDB moves to Pinecone or Weaviate (one line in `embedder_service.py`). A PostgreSQL table maps file IDs and vector collection IDs to user accounts. Groq swaps to OpenAI or Anthropic (one line in the LLM services). Authentication ties everything to a user — the `file_id` already acts as the key across the entire pipeline, so adding a user_id foreign key is the main schema change.
+
+> Files move from local disk to Supabase Storage (one line in `resume_service.py`). ChromaDB moves to Pinecone or Weaviate (one line in `embedder_service.py`). A Supabase PostgreSQL table maps file IDs to user accounts — the `file_id` already acts as the key across the entire pipeline, so adding a `user_id` foreign key is the main schema change. Groq swaps to OpenAI or Anthropic for production-grade SLAs (one line in the LLM services). Supabase's Row Level Security lets us enforce "users can only see their own rows" at the database level without any backend code change.
 
 **"Why FastAPI over Flask or Django?"**
+
 > FastAPI has async support out of the box — critical for LLM API calls that take several seconds. Pydantic handles request validation automatically (wrong shape → 422, no manual checks). Auto-generated OpenAPI docs at `/docs`. Django is overkill for an API-first backend; Flask requires wiring Pydantic and async manually.
 
 **"What is CORS and why do you need it?"**
+
 > CORS is a browser policy that blocks requests to a different origin than the page was loaded from. Frontend is on port 5173, backend on 8000 — different origins. FastAPI's `CORSMiddleware` adds `Access-Control-Allow-Origin` headers so the browser permits the cross-origin requests.
 
 ---
 
 ## What's Built
 
-| Feature | Where |
-|---|---|
-| Resume upload + validation | `POST /api/resume/upload`, `resume_service.py` |
-| PDF/DOCX parsing + section detection | `parser_service.py` |
-| Text chunking (overlapping windows) | `chunker_service.py` |
-| Local embeddings + ChromaDB storage | `embedder_service.py` |
-| ATS scoring via Groq | `POST /api/resume/analyze`, `llm_service.py` |
-| Matched/missing skills + score ring | `ResumeUpload.tsx` |
-| Role-specific interview questions | `POST /api/interview/questions`, `interview_service.py` |
-| Behavioral question bank (15 questions) | `InterviewPage.tsx` (hardcoded) |
-| AI feedback on answers | `POST /api/interview/feedback`, `interview_service.py` |
-| All / One-by-one question views | `InterviewPage.tsx` |
-| Cross-page state persistence | `ResumeContext.tsx` |
-| Nav tabs + SVG logo | `App.tsx`, `Logo.tsx` |
-| ATS score guide section | `App.tsx` |
+| Feature                                 | Where                                                   |
+| --------------------------------------- | ------------------------------------------------------- |
+| Resume upload + validation              | `POST /api/resume/upload`, `resume_service.py`          |
+| PDF/DOCX parsing + section detection    | `parser_service.py`                                     |
+| Text chunking (overlapping windows)     | `chunker_service.py`                                    |
+| Local embeddings + ChromaDB storage     | `embedder_service.py`                                   |
+| ATS scoring via Groq                    | `POST /api/resume/analyze`, `llm_service.py`            |
+| Matched/missing skills + score ring     | `ResumeUpload.tsx`                                      |
+| Role-specific interview questions       | `POST /api/interview/questions`, `interview_service.py` |
+| Behavioral question bank (15 questions) | `InterviewPage.tsx` (hardcoded)                         |
+| AI feedback on answers                  | `POST /api/interview/feedback`, `interview_service.py`  |
+| All / One-by-one question views         | `InterviewPage.tsx`                                     |
+| Cross-page state persistence            | `ResumeContext.tsx`                                     |
+| Nav + SVG logo + user avatar            | `App.tsx`, `Logo.tsx`                                   |
+| ATS score guide section                 | `App.tsx`                                               |
+| Auth gate (sign in / sign up / guest)   | `AuthGate.tsx`, route `/`                               |
+| Supabase JWT auth — frontend            | `AuthContext.tsx`, `lib/supabase.ts`                    |
+| Supabase JWT auth — backend             | `core/auth.py`, `core/supabase.py`                      |
+| Profile page (account info + sign out)  | `ProfilePage.tsx`, route `/profile`                     |
 
 ## What's Next
 
-| Feature | Notes |
-|---|---|
-| Authentication | Tie uploads and scores to user accounts |
-| S3 + PostgreSQL | Production-grade storage |
-| MCP integrations | Web fetch (auto-pull JD from URL), GitHub, LinkedIn |
-| Resume history | List of past uploads and scores per user |
+| Feature                       | Notes                                                   |
+| ----------------------------- | ------------------------------------------------------- |
+| Supabase Storage + PostgreSQL | Move files off local disk; tie uploads to user accounts |
+| Resume history                | List of past uploads and scores per user                |
+| MCP integrations              | Web fetch (auto-pull JD from URL), GitHub, LinkedIn     |
+| Chatbot                       | Conversational AI assistant within the app              |
+| Voice recognition             | Speak interview answers (Web Speech API or Whisper)     |

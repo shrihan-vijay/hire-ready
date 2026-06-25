@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { BrowserRouter, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import axios from 'axios'
 import {
+  Clock,
   FileSearch,
   Home,
   LoaderCircle,
@@ -16,6 +17,7 @@ import { Logo } from './components/Logo'
 import { AuthGate } from './components/AuthGate'
 import { ProfilePage } from './pages/ProfilePage'
 import { InterviewPage } from './pages/InterviewPage'
+import { HistoryPage } from './pages/HistoryPage'
 import { ResumeProvider } from './context/ResumeContext'
 import { useAuth } from './context/AuthContext'
 import './App.css'
@@ -31,11 +33,11 @@ const FEATURES = [
 
 const NAV_TABS = [
   { to: '/home',      label: 'Home',          icon: Home },
-  { to: '/interview', label: 'Interview Prep', icon: Mic },
+  { to: '/interview', label: 'Interview Prep', icon: Mic  },
+  { to: '/history',   label: 'History',        icon: Clock },
 ]
 
-function Nav({ connected, userInitial }: { connected: boolean | null; userInitial: string | null }) {
-  const loading = connected === null
+function Nav({ userInitial }: { userInitial: string | null }) {
   return (
     <nav className="nav">
       <div className="nav-brand">
@@ -58,20 +60,6 @@ function Nav({ connected, userInitial }: { connected: boolean | null; userInitia
       </div>
 
       <div className="nav-right">
-        <div
-          className={`status-pill ${
-            loading ? 'status-pill--loading' : connected ? 'status-pill--online' : 'status-pill--offline'
-          }`}
-        >
-          {loading ? (
-            <><LoaderCircle size={11} className="spin" aria-hidden="true" />Connecting</>
-          ) : connected ? (
-            <span className="status-dot" aria-label="Connected" />
-          ) : (
-            <><span className="status-dot" aria-hidden="true" />Offline</>
-          )}
-        </div>
-
         {userInitial && (
           <NavLink to="/profile" className="nav-avatar" aria-label="Your profile">
             {userInitial}
@@ -213,7 +201,7 @@ function AppShell() {
       <div className="blob blob--teal" aria-hidden="true" />
       <div className="blob blob--blue" aria-hidden="true" />
 
-      {!onAuthPage && <Nav connected={connected} userInitial={userInitial} />}
+      {!onAuthPage && <Nav userInitial={userInitial} />}
 
       <ResumeProvider>
         <Routes>
@@ -230,6 +218,7 @@ function AppShell() {
             element={isAuthed ? <InterviewPage /> : <Navigate to="/" replace />}
           />
           <Route path="/profile" element={<ProfilePage />} />
+          <Route path="/history" element={isAuthed ? <HistoryPage /> : <Navigate to="/" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </ResumeProvider>

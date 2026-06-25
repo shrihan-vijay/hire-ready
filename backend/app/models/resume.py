@@ -21,3 +21,14 @@ class AnalyzeResponse(BaseModel):
     matched_skills: list[str]
     missing_skills: list[str]
     summary: str
+
+
+class HistoryItem(BaseModel):
+    id: str
+    file_id: str
+    filename: str
+    score: int | None
+    matched_skills: list[str]
+    missing_skills: list[str]
+    jd_snippet: str | None
+    uploaded_at: str

@@ -1,4 +1,4 @@
-import { ChangeEvent, DragEvent, useRef, useState } from 'react'
+import { ChangeEvent, DragEvent, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
 import {
@@ -10,9 +10,11 @@ import {
   UploadCloud,
   X,
   Sparkles,
+  History,
 } from 'lucide-react'
 import { useResume } from '../context/ResumeContext'
 import type { ParseResult, AnalyzeResult } from '../context/ResumeContext'
+import { useAuth } from '../context/AuthContext'
 import './ResumeUpload.css'
 
 type UploadState = 'idle' | 'dragover' | 'uploading' | 'error'
@@ -55,9 +57,17 @@ function ScoreRing({ score }: { score: number }) {
   )
 }
 
+interface HistoryItem {
+  id: string
+  file_id: string
+  filename: string
+  score: number | null
+}
+
 export function ResumeUpload() {
   const navigate = useNavigate()
   const { parseResult, setParseResult, analyzeResult, setAnalyzeResult, jd, setJd, clearAll } = useResume()
+  const { user } = useAuth()
 
   // Ephemeral state — does not need to survive navigation
   const [file, setFile] = useState<File | null>(null)
@@ -66,6 +76,14 @@ export function ResumeUpload() {
   const [analyzeState, setAnalyzeState] = useState<AnalyzeState>(analyzeResult ? 'done' : 'idle')
   const [analyzeError, setAnalyzeError] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
+  const [prevResume, setPrevResume] = useState<HistoryItem | null>(null)
+
+  useEffect(() => {
+    if (!user || parseResult) return
+    axios.get<HistoryItem[]>(`${apiBaseUrl}/api/resume/history`)
+      .then(res => { if (res.data.length > 0) setPrevResume(res.data[0]) })
+      .catch(() => {})
+  }, [user, parseResult])
 
   function pick(f: File) {
     const err = validate(f)
@@ -159,7 +177,9 @@ export function ResumeUpload() {
             <p className="ru-success-title">Parsed successfully</p>
             <p className="ru-success-file">{parseResult.filename}</p>
           </div>
-          <span className="ru-word-count">{parseResult.word_count.toLocaleString()} words</span>
+          {parseResult.word_count > 0 && (
+            <span className="ru-word-count">{parseResult.word_count.toLocaleString()} words</span>
+          )}
         </div>
 
         {parseResult.sections.length > 0 && (
@@ -346,6 +366,34 @@ export function ResumeUpload() {
           <><UploadCloud size={17} aria-hidden="true" /> Upload &amp; Analyze</>
         )}
       </button>
+
+      {prevResume && (
+        <div className="ru-prev-resume">
+          <span className="ru-prev-divider">or</span>
+          <button
+            className="ru-prev-btn"
+            onClick={() => setParseResult({
+              file_id: prevResume.file_id,
+              filename: prevResume.filename,
+              word_count: 0,
+              chunk_count: 0,
+              sections: [],
+            })}
+          >
+            <History size={15} aria-hidden="true" />
+            Use previous resume
+            <span className="ru-prev-filename">{prevResume.filename}</span>
+            {prevResume.score !== null && (
+              <span
+                className="ru-prev-score"
+                style={{ background: prevResume.score >= 70 ? '#22c55e' : prevResume.score >= 45 ? '#f59e0b' : '#ef4444' }}
+              >
+                {prevResume.score}
+              </span>
+            )}
+          </button>
+        </div>
+      )}
     </div>
   )
 }
