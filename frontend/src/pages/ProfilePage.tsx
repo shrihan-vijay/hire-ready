@@ -54,6 +54,7 @@ export function ProfilePage() {
           <Mail size={14} />
           {user.email}
         </p>
+
         <button className="profile-signout-btn" onClick={signOut}>
           <LogOut size={14} />
           Sign out

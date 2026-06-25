@@ -13,6 +13,7 @@ export interface AnalyzeResult {
   matched_skills: string[]
   missing_skills: string[]
   summary: string
+  github_enriched: boolean
 }
 
 interface ResumeContextType {
@@ -22,6 +23,8 @@ interface ResumeContextType {
   setAnalyzeResult: (r: AnalyzeResult | null) => void
   jd: string
   setJd: (jd: string) => void
+  githubUsername: string
+  setGithubUsername: (u: string) => void
   clearAll: () => void
 }
 
@@ -31,6 +34,7 @@ export function ResumeProvider({ children }: { children: ReactNode }) {
   const [parseResult, setParseResult] = useState<ParseResult | null>(null)
   const [analyzeResult, setAnalyzeResult] = useState<AnalyzeResult | null>(null)
   const [jd, setJd] = useState('')
+  const [githubUsername, setGithubUsername] = useState('')
 
   function clearAll() {
     setParseResult(null)
@@ -39,7 +43,13 @@ export function ResumeProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <ResumeContext.Provider value={{ parseResult, setParseResult, analyzeResult, setAnalyzeResult, jd, setJd, clearAll }}>
+    <ResumeContext.Provider value={{
+      parseResult, setParseResult,
+      analyzeResult, setAnalyzeResult,
+      jd, setJd,
+      githubUsername, setGithubUsername,
+      clearAll,
+    }}>
       {children}
     </ResumeContext.Provider>
   )

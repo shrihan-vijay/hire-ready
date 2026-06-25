@@ -1,5 +1,6 @@
 import json
 import os
+from typing import Optional
 
 from groq import Groq
 
@@ -13,22 +14,47 @@ def _get_client() -> Groq:
     return _client
 
 
-def analyze_resume(chunks: list[str], job_description: str) -> dict:
+def _format_github_section(ctx: dict) -> str:
+    lines = [f"\nGITHUB PROFILE (@{ctx['username']}) — real project evidence to supplement the resume:"]
+    for repo in ctx.get("repos", []):
+        line = f"  • {repo['name']}"
+        if repo["language"]:
+            line += f" [{repo['language']}]"
+        if repo["description"]:
+            line += f" — {repo['description']}"
+        if repo["topics"]:
+            line += f" | tags: {', '.join(repo['topics'][:6])}"
+        lines.append(line)
+        if repo.get("readme"):
+            lines.append(f"    README: {repo['readme'][:200]}")
+    lines.append(
+        "If GitHub demonstrates skills not explicitly stated in the resume, "
+        "factor that evidence into the score and matched_skills.\n"
+    )
+    return "\n".join(lines)
+
+
+def analyze_resume(
+    chunks: list[str],
+    job_description: str,
+    github_context: Optional[dict] = None,
+) -> dict:
     resume_text = "\n\n---\n\n".join(chunks)
+    github_section = _format_github_section(github_context) if github_context else ""
 
     prompt = f"""You are an ATS (Applicant Tracking System) expert. Analyze how well the resume matches the job description.
 
 RESUME SECTIONS:
 {resume_text}
-
+{github_section}
 JOB DESCRIPTION:
 {job_description}
 
 Respond with a JSON object in this exact format (no markdown, no code blocks, just raw JSON):
 {{
   "score": <integer 0-100>,
-  "matched_skills": [<list of skills/keywords present in both resume and JD>],
-  "missing_skills": [<list of important skills/keywords in JD but missing from resume>],
+  "matched_skills": [<list of skills/keywords present in both resume/GitHub and JD>],
+  "missing_skills": [<list of important skills/keywords in JD but missing from resume and GitHub>],
   "summary": "<2-3 sentence plain-English summary of the match>"
 }}"""
 

@@ -14,6 +14,7 @@ class ResumeUploadResponse(BaseModel):
 class AnalyzeRequest(BaseModel):
     file_id: str
     job_description: str
+    github_username: str | None = None
 
 
 class AnalyzeResponse(BaseModel):
@@ -21,6 +22,16 @@ class AnalyzeResponse(BaseModel):
     matched_skills: list[str]
     missing_skills: list[str]
     summary: str
+    github_enriched: bool = False
+
+
+class FetchJDRequest(BaseModel):
+    url: str
+
+
+class FetchJDResponse(BaseModel):
+    text: str
+    title: str | None = None
 
 
 class HistoryItem(BaseModel):

@@ -203,7 +203,7 @@ function AppShell() {
 
       {!onAuthPage && <Nav userInitial={userInitial} />}
 
-      <ResumeProvider>
+      <ResumeProvider key={user?.id ?? 'logged-out'}>
         <Routes>
           <Route
             path="/"
