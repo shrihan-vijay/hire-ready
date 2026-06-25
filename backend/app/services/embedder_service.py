@@ -43,6 +43,16 @@ def embed_and_store(file_id: str, filename: str, chunks: list[str]) -> int:
     return len(chunks)
 
 
+def delete_chunks(file_id: str) -> None:
+    try:
+        collection = _get_collection()
+        existing = collection.get(where={"file_id": file_id})
+        if existing["ids"]:
+            collection.delete(ids=existing["ids"])
+    except Exception as exc:
+        print(f"[embedder_service] delete_chunks error for {file_id}: {exc}")
+
+
 def query_resume(file_id: str, query: str, n_results: int = 5) -> list[str]:
     collection = _get_collection()
     existing = collection.get(where={"file_id": file_id})

@@ -1,25 +1,29 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { MessageSquare, FileText } from 'lucide-react'
+import { ChevronDown, FileText, MessageSquare, Trash2 } from 'lucide-react'
 import axios from 'axios'
 import { useAuth } from '../context/AuthContext'
 import './HistoryPage.css'
 
 const API = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
 
-interface HistoryItem {
-  id: string
-  file_id: string
-  filename: string
-  score: number | null
+interface AnalysisEntry {
+  score: number
   matched_skills: string[]
   missing_skills: string[]
   jd_snippet: string | null
-  uploaded_at: string
+  summary: string
+  analyzed_at: string
 }
 
-function scoreColor(score: number | null): string {
-  if (score === null) return '#9ca3af'
+interface ResumeFile {
+  file_id: string
+  filename: string
+  uploaded_at: string
+  analyses: AnalysisEntry[]
+}
+
+function scoreColor(score: number): string {
   if (score >= 70) return '#22c55e'
   if (score >= 45) return '#f59e0b'
   return '#ef4444'
@@ -32,24 +36,39 @@ function formatDate(iso: string): string {
 export function HistoryPage() {
   const { user, loading } = useAuth()
   const navigate = useNavigate()
-  const [history, setHistory] = useState<HistoryItem[]>([])
+  const [history, setHistory] = useState<ResumeFile[]>([])
   const [fetching, setFetching] = useState(false)
+  const [expanded, setExpanded] = useState<string | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState<string | null>(null)
+  const [expandedSummary, setExpandedSummary] = useState<string | null>(null)
 
   useEffect(() => {
     if (!user) return
     setFetching(true)
-    axios.get<HistoryItem[]>(`${API}/api/resume/history`)
-      .then(res => setHistory(res.data))
+    axios.get<ResumeFile[]>(`${API}/api/resume/history`)
+      .then(res => {
+        setHistory(res.data)
+        if (res.data.length > 0) setExpanded(res.data[0].file_id)
+      })
       .catch(() => setHistory([]))
       .finally(() => setFetching(false))
   }, [user])
 
+  async function handleDelete(file_id: string) {
+    setDeleting(file_id)
+    try {
+      await axios.delete(`${API}/api/resume/history/${file_id}`)
+      setHistory(h => h.filter(r => r.file_id !== file_id))
+      if (expanded === file_id) setExpanded(null)
+    } finally {
+      setDeleting(null)
+      setConfirmDelete(null)
+    }
+  }
+
   if (loading) {
-    return (
-      <div className="history-page">
-        <div className="history-spinner" />
-      </div>
-    )
+    return <div className="history-page"><div className="history-spinner" /></div>
   }
 
   if (!user) {
@@ -59,9 +78,7 @@ export function HistoryPage() {
           <FileText size={36} className="history-empty-icon" />
           <p className="history-empty-title">Sign in to see your history</p>
           <p className="history-empty-sub">Your uploaded resumes and scores are saved to your account.</p>
-          <button className="history-signin-btn" onClick={() => navigate('/profile')}>
-            Go to sign in
-          </button>
+          <button className="history-action-btn" onClick={() => navigate('/profile')}>Go to sign in</button>
         </div>
       </div>
     )
@@ -71,7 +88,7 @@ export function HistoryPage() {
     <div className="history-page">
       <div className="history-header">
         <h1 className="history-title">Resume History</h1>
-        <p className="history-sub">Your uploaded resumes and ATS scores, newest first.</p>
+        <p className="history-sub">Your uploads, newest first. Click a resume to see its scores.</p>
       </div>
 
       {fetching && <div className="history-spinner" />}
@@ -81,48 +98,120 @@ export function HistoryPage() {
           <FileText size={36} className="history-empty-icon" />
           <p className="history-empty-title">No resumes yet</p>
           <p className="history-empty-sub">Upload a resume from the Home tab to get started.</p>
-          <button className="history-signin-btn" onClick={() => navigate('/home')}>
-            Go to Home
-          </button>
+          <button className="history-action-btn" onClick={() => navigate('/home')}>Go to Home</button>
         </div>
       )}
 
       <div className="history-list">
         {!fetching && history.map(item => {
-          const color = scoreColor(item.score)
+          const isOpen = expanded === item.file_id
+          const topScore = item.analyses[0]?.score ?? null
+
           return (
-            <div key={item.id} className="history-card">
-              <div className="history-card-header">
-                <div className="history-filename">{item.filename}</div>
-                <div className="history-score-badge" style={{ background: color }}>
-                  {item.score !== null ? item.score : '—'}
+            <div key={item.file_id} className={`history-card ${isOpen ? 'history-card--open' : ''}`}>
+              {confirmDelete === item.file_id ? (
+                <div className="history-confirm-row">
+                  <span className="history-confirm-msg">Delete this resume and all its scores?</span>
+                  <button
+                    className="history-confirm-btn history-confirm-btn--cancel"
+                    onClick={() => setConfirmDelete(null)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="history-confirm-btn history-confirm-btn--delete"
+                    disabled={deleting === item.file_id}
+                    onClick={() => handleDelete(item.file_id)}
+                  >
+                    {deleting === item.file_id ? 'Deleting…' : 'Delete'}
+                  </button>
                 </div>
-              </div>
-              <div className="history-date">{formatDate(item.uploaded_at)}</div>
-              {item.jd_snippet && (
-                <p className="history-jd-snippet">
-                  {item.jd_snippet.length > 160 ? item.jd_snippet.slice(0, 160) + '…' : item.jd_snippet}
-                </p>
+              ) : (
+                <button
+                  className="history-card-header"
+                  onClick={() => setExpanded(isOpen ? null : item.file_id)}
+                >
+                  <div className="history-card-left">
+                    <FileText size={15} className="history-file-icon" />
+                    <div>
+                      <p className="history-filename">{item.filename}</p>
+                      <p className="history-date">Uploaded {formatDate(item.uploaded_at)}</p>
+                    </div>
+                  </div>
+                  <div className="history-card-right">
+                    {topScore !== null && (
+                      <span className="history-top-score" style={{ background: scoreColor(topScore) }}>
+                        {topScore}
+                      </span>
+                    )}
+                    {item.analyses.length > 1 && (
+                      <span className="history-count">{item.analyses.length} scores</span>
+                    )}
+                    <button
+                      className="history-delete-btn"
+                      onClick={e => { e.stopPropagation(); setConfirmDelete(item.file_id) }}
+                      aria-label="Delete resume"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                    <ChevronDown
+                      size={16}
+                      className={`history-chevron ${isOpen ? 'history-chevron--open' : ''}`}
+                    />
+                  </div>
+                </button>
               )}
-              {item.score !== null && (
-                <div className="history-skills">
-                  {item.matched_skills.slice(0, 4).map(s => (
-                    <span key={s} className="history-skill-tag matched">{s}</span>
-                  ))}
-                  {item.missing_skills.slice(0, 3).map(s => (
-                    <span key={s} className="history-skill-tag missing">{s}</span>
-                  ))}
+
+              {isOpen && (
+                <div className="history-analyses">
+                  {item.analyses.length === 0 ? (
+                    <p className="history-no-analyses">No ATS scores yet — analyze against a job description from the Home tab.</p>
+                  ) : (
+                    item.analyses.map((a, i) => {
+                      const summaryKey = `${item.file_id}-${i}`
+                      const summaryOpen = expandedSummary === summaryKey
+                      return (
+                      <div key={i} className="history-analysis-row">
+                        <div className="history-analysis-header">
+                          <span className="history-score-badge" style={{ background: scoreColor(a.score) }}>
+                            {a.score}
+                          </span>
+                          <span className="history-analysis-date">{formatDate(a.analyzed_at)}</span>
+                          {a.summary && (
+                            <button
+                              className="history-summary-toggle"
+                              onClick={() => setExpandedSummary(summaryOpen ? null : summaryKey)}
+                            >
+                              {summaryOpen ? 'Hide summary' : 'View summary'}
+                            </button>
+                          )}
+                        </div>
+                        {summaryOpen && a.summary && (
+                          <p className="history-summary">{a.summary}</p>
+                        )}
+                        <div className="history-skills">
+                          {a.matched_skills.slice(0, 4).map(s => (
+                            <span key={s} className="history-skill-tag matched">{s}</span>
+                          ))}
+                          {a.missing_skills.slice(0, 3).map(s => (
+                            <span key={s} className="history-skill-tag missing">{s}</span>
+                          ))}
+                        </div>
+                        <button
+                          className="history-prep-btn"
+                          onClick={() => navigate('/interview', {
+                            state: { file_id: item.file_id, job_description: a.jd_snippet ?? '' },
+                          })}
+                        >
+                          <MessageSquare size={13} />
+                          Prep interview
+                        </button>
+                      </div>
+                    )
+                    })
+                  )}
                 </div>
               )}
-              <button
-                className="history-prep-btn"
-                onClick={() => navigate('/interview', {
-                  state: { file_id: item.file_id, job_description: item.jd_snippet ?? '' },
-                })}
-              >
-                <MessageSquare size={14} />
-                Prep interview
-              </button>
             </div>
           )
         })}

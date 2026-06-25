@@ -18,7 +18,7 @@ import { AuthGate } from './components/AuthGate'
 import { ProfilePage } from './pages/ProfilePage'
 import { InterviewPage } from './pages/InterviewPage'
 import { HistoryPage } from './pages/HistoryPage'
-import { ResumeProvider } from './context/ResumeContext'
+import { ResumeProvider, useResume } from './context/ResumeContext'
 import { useAuth } from './context/AuthContext'
 import './App.css'
 
@@ -71,6 +71,20 @@ function Nav({ userInitial }: { userInitial: string | null }) {
 }
 
 function HomePage({ connected }: { connected: boolean | null }) {
+  const { parseResult, analyzeResult } = useResume()
+
+  const cardTitle = analyzeResult
+    ? 'Your ATS results'
+    : parseResult
+    ? 'Match to a job'
+    : 'Upload your resume'
+
+  const cardSub = analyzeResult
+    ? parseResult?.filename ?? ''
+    : parseResult
+    ? 'Paste a JD or drop a URL to get your ATS score'
+    : 'PDF or DOCX · 5 MB max'
+
   return (
     <>
       <main className="main">
@@ -103,8 +117,8 @@ function HomePage({ connected }: { connected: boolean | null }) {
 
         <div className="upload-card">
           <div className="upload-card-header">
-            <h2 className="upload-card-title">Upload your resume</h2>
-            <p className="upload-card-sub">PDF or DOCX · 5 MB max</p>
+            <h2 className="upload-card-title">{cardTitle}</h2>
+            {cardSub && <p className="upload-card-sub">{cardSub}</p>}
           </div>
 
           {connected === false ? (

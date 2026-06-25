@@ -61,11 +61,17 @@ function ScoreRing({ score }: { score: number }) {
   )
 }
 
-interface HistoryItem {
-  id: string
+interface PrevResume {
   file_id: string
   filename: string
   score: number | null
+}
+
+interface ResumeFile {
+  file_id: string
+  filename: string
+  uploaded_at: string
+  analyses: { score: number }[]
 }
 
 export function ResumeUpload() {
@@ -84,7 +90,7 @@ export function ResumeUpload() {
   const [fetchingJd, setFetchingJd] = useState(false)
   const [jdFetchError, setJdFetchError] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
-  const [prevResume, setPrevResume] = useState<HistoryItem | null>(null)
+  const [prevResume, setPrevResume] = useState<PrevResume | null>(null)
   const [showGithubInfo, setShowGithubInfo] = useState(false)
   const [githubStatus, setGithubStatus] = useState<{ connected: boolean; username: string | null } | null>(null)
   const [githubSuccessMsg, setGithubSuccessMsg] = useState('')
@@ -92,8 +98,17 @@ export function ResumeUpload() {
 
   useEffect(() => {
     if (!user || parseResult) return
-    axios.get<HistoryItem[]>(`${apiBaseUrl}/api/resume/history`)
-      .then(res => { if (res.data.length > 0) setPrevResume(res.data[0]) })
+    axios.get<ResumeFile[]>(`${apiBaseUrl}/api/resume/history`)
+      .then(res => {
+        if (res.data.length > 0) {
+          const latest = res.data[0]
+          setPrevResume({
+            file_id: latest.file_id,
+            filename: latest.filename,
+            score: latest.analyses[0]?.score ?? null,
+          })
+        }
+      })
       .catch(() => {})
   }, [user, parseResult])
 

@@ -34,13 +34,10 @@ function UploadMock() {
   )
 }
 
-/* ── Step 2: ATS Score (animated ring + counter) ───────── */
+/* ── Step 2: ATS Score (animated ring + skill chips) ───────── */
 
-const BARS = [
-  { label: 'Keywords', pct: 82 },
-  { label: 'Skills',   pct: 64 },
-  { label: 'Format',   pct: 91 },
-]
+const MATCHED = ['Python', 'React', 'SQL', 'REST APIs']
+const MISSING = ['Docker', 'AWS', 'Kubernetes']
 const SCORE_TARGET = 78
 const R = 50
 const CIRC = 2 * Math.PI * R
@@ -95,19 +92,15 @@ function ScoreMock() {
           </div>
         </div>
 
-        <div className="mock-bars">
-          {BARS.map(({ label, pct }) => (
-            <div key={label} className="mock-bar-row">
-              <span className="mock-bar-label">{label}</span>
-              <div className="mock-bar-track">
-                <div
-                  className="mock-bar-fill"
-                  style={{ '--bar-pct': `${pct}%` } as React.CSSProperties}
-                />
-              </div>
-              <span className="mock-bar-pct">{pct}%</span>
-            </div>
-          ))}
+        <div className="mock-skills">
+          <p className="mock-skills-label">Matched</p>
+          <div className="mock-skill-chips">
+            {MATCHED.map(s => <span key={s} className="mock-chip mock-chip--matched">{s}</span>)}
+          </div>
+          <p className="mock-skills-label">Missing</p>
+          <div className="mock-skill-chips">
+            {MISSING.map(s => <span key={s} className="mock-chip mock-chip--missing">{s}</span>)}
+          </div>
         </div>
       </div>
     </div>
@@ -160,7 +153,6 @@ function GapMock() {
 /* ── Step 4: Interview Prep ────────────────────────────── */
 
 function InterviewMock() {
-  const [answer, setAnswer] = useState('')
   const [revealed, setRevealed] = useState(false)
 
   return (
@@ -178,32 +170,26 @@ function InterviewMock() {
       <div className="mock-textarea-wrap">
         <textarea
           className="mock-answer-textarea"
-          placeholder="Type your answer here…"
-          value={answer}
-          onChange={(e) => setAnswer(e.target.value)}
+          defaultValue="I identified the root cause by checking logs, rolled back the deploy, and kept stakeholders updated throughout."
           rows={3}
-          aria-label="Your answer"
+          readOnly
+          aria-label="Example answer"
         />
-        {answer.length > 0 && (
-          <span className="mock-char-count">{answer.length} chars</span>
-        )}
       </div>
 
       {!revealed ? (
         <button className="mock-reveal-btn" onClick={() => setRevealed(true)}>
           <Sparkles size={13} aria-hidden="true" />
-          See AI-suggested answer
+          Get AI feedback
         </button>
       ) : (
         <div className="mock-suggested">
           <p className="mock-suggested-label">
             <Sparkles size={12} aria-hidden="true" />
-            Suggested · STAR method
+            AI Feedback
           </p>
           <p className="mock-suggested-text">
-            "At my last role, our payment service went down at peak load. I
-            isolated it to a recent deploy, rolled back in 8 minutes, and sent
-            stakeholder updates every 10 minutes until resolved."
+            Good instinct to check logs first. Strengthen this by quantifying the impact — how long was the outage, how many users affected? Also mention what you changed afterward to prevent it recurring.
           </p>
         </div>
       )}
@@ -227,7 +213,7 @@ const STEPS = [
     label: 'ATS Score',
     title: 'Get your ATS score',
     description:
-      'Paste any job description and we score your resume against it — keyword coverage, skill match, and formatting quality.',
+      'Paste a job description or drop a URL and we score your resume against it — you get a 0–100 match score, the skills you already have, and the gaps to close.',
     Preview: ScoreMock,
   },
   {
@@ -243,7 +229,7 @@ const STEPS = [
     label: 'Interview Prep',
     title: 'Ace the interview',
     description:
-      'Get AI-generated behavioral and technical questions tailored to the role, with STAR-method coaching on every answer.',
+      'Get AI-generated behavioral and technical questions tailored to the role. Type your answer and get honest AI feedback on what landed and what to sharpen.',
     Preview: InterviewMock,
   },
 ]

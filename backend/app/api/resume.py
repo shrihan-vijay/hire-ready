@@ -3,9 +3,9 @@ from typing import Optional
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
 from app.core.auth import get_current_user
-from app.models.resume import AnalyzeRequest, AnalyzeResponse, FetchJDRequest, FetchJDResponse, HistoryItem, ResumeUploadResponse
-from app.services.embedder_service import query_resume
-from app.services.history_service import get_user_history, save_analysis_result, save_upload_record
+from app.models.resume import AnalyzeRequest, AnalyzeResponse, FetchJDRequest, FetchJDResponse, ResumeFile, ResumeUploadResponse
+from app.services.embedder_service import delete_chunks, query_resume
+from app.services.history_service import delete_resume_record, get_user_history, save_analysis_result, save_upload_record
 from app.core.config import GITHUB_TOKEN
 from app.services.github_connection_service import get_github_connection
 from app.services.github_service import fetch_github_profile
@@ -68,6 +68,7 @@ async def analyze(
             result["matched_skills"],
             result["missing_skills"],
             body.job_description,
+            result.get("summary", ""),
         )
     return AnalyzeResponse(**result)
 
@@ -78,7 +79,15 @@ async def fetch_jd(body: FetchJDRequest):
     return FetchJDResponse(**result)
 
 
-@router.get("/history", response_model=list[HistoryItem])
+@router.delete("/history/{file_id}", status_code=204)
+async def delete_history(file_id: str, user: dict = Depends(get_current_user)):
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    delete_resume_record(user["id"], file_id)
+    delete_chunks(file_id)
+
+
+@router.get("/history", response_model=list[ResumeFile])
 async def history(user: dict = Depends(get_current_user)):
     if not user:
         raise HTTPException(status_code=401, detail="Authentication required")

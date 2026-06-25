@@ -34,12 +34,17 @@ class FetchJDResponse(BaseModel):
     title: str | None = None
 
 
-class HistoryItem(BaseModel):
-    id: str
-    file_id: str
-    filename: str
-    score: int | None
+class AnalysisEntry(BaseModel):
+    score: int
     matched_skills: list[str]
     missing_skills: list[str]
     jd_snippet: str | None
+    summary: str = ""
+    analyzed_at: str
+
+
+class ResumeFile(BaseModel):
+    file_id: str
+    filename: str
     uploaded_at: str
+    analyses: list[AnalysisEntry]
