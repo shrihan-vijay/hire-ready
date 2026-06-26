@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from app.core.auth import get_current_user
 from app.models.resume import AnalyzeRequest, AnalyzeResponse, FetchJDRequest, FetchJDResponse, ResumeFile, ResumeUploadResponse
 from app.services.embedder_service import delete_chunks, query_resume
-from app.services.history_service import delete_resume_record, get_user_history, save_analysis_result, save_upload_record
+from app.services.history_service import delete_analysis_entry, delete_resume_record, get_user_history, save_analysis_result, save_upload_record
 from app.core.config import GITHUB_TOKEN
 from app.services.github_connection_service import get_github_connection
 from app.services.github_service import fetch_github_profile
@@ -40,6 +40,13 @@ async def analyze(
     body: AnalyzeRequest,
     user: Optional[dict] = Depends(get_current_user),
 ):
+    jd_words = body.job_description.strip().split()
+    if len(jd_words) < 20:
+        raise HTTPException(
+            status_code=422,
+            detail="Job description is too short to score against. Please paste a complete job description describing the role and its requirements.",
+        )
+
     chunks = query_resume(body.file_id, body.job_description)
     if not chunks:
         raise HTTPException(status_code=404, detail="No resume data found for this file_id.")
@@ -77,6 +84,13 @@ async def analyze(
 async def fetch_jd(body: FetchJDRequest):
     result = await fetch_jd_from_url(body.url)
     return FetchJDResponse(**result)
+
+
+@router.delete("/history/{file_id}/score", status_code=204)
+async def delete_score(file_id: str, at: str, user: dict = Depends(get_current_user)):
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    delete_analysis_entry(user["id"], file_id, at)
 
 
 @router.delete("/history/{file_id}", status_code=204)

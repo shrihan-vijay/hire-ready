@@ -21,6 +21,7 @@ class AnalyzeResponse(BaseModel):
     score: int
     matched_skills: list[str]
     missing_skills: list[str]
+    qualification_gaps: list[str] = []
     summary: str
     github_enriched: bool = False
 

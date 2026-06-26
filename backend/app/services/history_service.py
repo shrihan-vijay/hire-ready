@@ -55,6 +55,17 @@ def delete_resume_record(user_id: str, file_id: str) -> None:
         print(f"[history_service] delete error: {exc}")
 
 
+def delete_analysis_entry(user_id: str, file_id: str, analyzed_at: str) -> None:
+    try:
+        get_supabase_admin().table(TABLE).delete() \
+            .eq("user_id", user_id) \
+            .eq("file_id", file_id) \
+            .eq("uploaded_at", analyzed_at) \
+            .execute()
+    except Exception as exc:
+        print(f"[history_service] delete_analysis_entry error: {exc}")
+
+
 def get_user_history(user_id: str) -> list[dict]:
     rows = (
         get_supabase_admin()

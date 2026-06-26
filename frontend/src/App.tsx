@@ -37,10 +37,17 @@ const NAV_TABS = [
   { to: '/history',   label: 'History',        icon: Clock },
 ]
 
-function Nav({ userInitial }: { userInitial: string | null }) {
+function Nav({ userInitial, onLogoClick }: { userInitial: string | null; onLogoClick?: () => void }) {
   return (
     <nav className="nav">
-      <div className="nav-brand">
+      <div
+        className="nav-brand"
+        onClick={onLogoClick}
+        role={onLogoClick ? 'button' : undefined}
+        tabIndex={onLogoClick ? 0 : undefined}
+        onKeyDown={(e) => e.key === 'Enter' && onLogoClick?.()}
+        style={{ cursor: onLogoClick ? 'pointer' : undefined }}
+      >
         <Logo size={30} />
         <span>HireReady</span>
       </div>
@@ -164,6 +171,71 @@ function HomePage({ connected }: { connected: boolean | null }) {
   )
 }
 
+function AppInner({
+  userInitial, connected, isAuthed, onAuthPage, handleGuest,
+}: {
+  userInitial: string | null
+  connected: boolean | null
+  isAuthed: boolean
+  onAuthPage: boolean
+  handleGuest: () => void
+}) {
+  const { parseResult, analyzeResult, clearAll } = useResume()
+  const navigate = useNavigate()
+  const [showResetConfirm, setShowResetConfirm] = useState(false)
+
+  function handleLogoClick() {
+    if (parseResult || analyzeResult) {
+      setShowResetConfirm(true)
+    } else {
+      navigate('/home')
+    }
+  }
+
+  function confirmReset() {
+    clearAll()
+    setShowResetConfirm(false)
+    navigate('/home', { replace: true })
+  }
+
+  return (
+    <>
+      {!onAuthPage && <Nav userInitial={userInitial} onLogoClick={handleLogoClick} />}
+
+      {showResetConfirm && (
+        <div className="reset-overlay" role="dialog" aria-modal="true" aria-labelledby="reset-title">
+          <div className="reset-modal">
+            <p className="reset-modal-title" id="reset-title">Start over?</p>
+            <p className="reset-modal-sub">This will clear your uploaded resume and results.</p>
+            <div className="reset-modal-actions">
+              <button className="reset-modal-cancel" onClick={() => setShowResetConfirm(false)}>Cancel</button>
+              <button className="reset-modal-confirm" onClick={confirmReset}>Yes, restart</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <Routes>
+        <Route
+          path="/"
+          element={isAuthed ? <Navigate to="/home" replace /> : <AuthGate onGuest={handleGuest} />}
+        />
+        <Route
+          path="/home"
+          element={isAuthed ? <HomePage connected={connected} /> : <Navigate to="/" replace />}
+        />
+        <Route
+          path="/interview"
+          element={isAuthed ? <InterviewPage /> : <Navigate to="/" replace />}
+        />
+        <Route path="/profile" element={<ProfilePage />} />
+        <Route path="/history" element={isAuthed ? <HistoryPage /> : <Navigate to="/" replace />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </>
+  )
+}
+
 function AppShell() {
   const { user, loading } = useAuth()
   const navigate = useNavigate()
@@ -215,26 +287,14 @@ function AppShell() {
       <div className="blob blob--teal" aria-hidden="true" />
       <div className="blob blob--blue" aria-hidden="true" />
 
-      {!onAuthPage && <Nav userInitial={userInitial} />}
-
       <ResumeProvider key={user?.id ?? 'logged-out'}>
-        <Routes>
-          <Route
-            path="/"
-            element={isAuthed ? <Navigate to="/home" replace /> : <AuthGate onGuest={handleGuest} />}
-          />
-          <Route
-            path="/home"
-            element={isAuthed ? <HomePage connected={connected} /> : <Navigate to="/" replace />}
-          />
-          <Route
-            path="/interview"
-            element={isAuthed ? <InterviewPage /> : <Navigate to="/" replace />}
-          />
-          <Route path="/profile" element={<ProfilePage />} />
-          <Route path="/history" element={isAuthed ? <HistoryPage /> : <Navigate to="/" replace />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+        <AppInner
+          userInitial={userInitial}
+          connected={connected}
+          isAuthed={isAuthed}
+          onAuthPage={onAuthPage}
+          handleGuest={handleGuest}
+        />
       </ResumeProvider>
     </div>
   )

@@ -3,6 +3,8 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import axios from 'axios'
 import {
   AlertCircle,
+  AlertTriangle,
+  ArrowLeft,
   CheckCircle2,
   FileText,
   GitBranch,
@@ -186,6 +188,10 @@ export function ResumeUpload() {
 
   async function analyze() {
     if (!parseResult || !jd.trim()) return
+    if (jd.trim().split(/\s+/).filter(Boolean).length < 20) {
+      setAnalyzeError('Job description is too short. Please paste a complete job description describing the role and its requirements.')
+      return
+    }
     setAnalyzeState('analyzing')
     setAnalyzeError('')
     try {
@@ -307,6 +313,10 @@ export function ResumeUpload() {
         {/* JD input — hide when results are showing */}
         {analyzeState !== 'done' && !analyzeResult && (
           <div className="ru-jd-section">
+            <button className="ru-back-btn" onClick={reset}>
+              <ArrowLeft size={14} aria-hidden="true" />
+              Upload different resume
+            </button>
             <div className="ru-jd-header">
               <p className="ru-jd-label">Add a job description to get your ATS score</p>
               <div className="ru-jd-mode-switch">
@@ -439,6 +449,22 @@ export function ResumeUpload() {
               )}
             </div>
 
+            {analyzeResult.qualification_gaps.length > 0 && (
+              <div className="ru-qual-gaps">
+                <p className="ru-qual-gaps-heading">
+                  <AlertTriangle size={13} aria-hidden="true" />
+                  Qualification gaps
+                </p>
+                <div className="ru-qual-gaps-list">
+                  {analyzeResult.qualification_gaps.map((g) => (
+                    <span key={g} className="ru-qual-gap-badge">
+                      {g}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="ru-results-actions">
               <button className="ru-again-btn" onClick={resetJdMode}>
                 Try another JD
@@ -454,9 +480,6 @@ export function ResumeUpload() {
           </div>
         )}
 
-        <button className="ru-reset-link" onClick={reset}>
-          Upload a different resume
-        </button>
       </div>
     )
   }
@@ -547,14 +570,6 @@ export function ResumeUpload() {
             <History size={15} aria-hidden="true" />
             Use previous resume
             <span className="ru-prev-filename">{prevResume.filename}</span>
-            {prevResume.score !== null && (
-              <span
-                className="ru-prev-score"
-                style={{ background: prevResume.score >= 70 ? '#22c55e' : prevResume.score >= 45 ? '#f59e0b' : '#ef4444' }}
-              >
-                {prevResume.score}
-              </span>
-            )}
           </button>
         </div>
       )}

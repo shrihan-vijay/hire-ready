@@ -1,4 +1,5 @@
 import re
+from io import BytesIO
 
 import pdfplumber
 from docx import Document
@@ -18,14 +19,13 @@ _SECTIONS = {
 }
 
 
-def extract_text(filepath: str, content_type: str) -> str:
+def extract_text(file_bytes: bytes, content_type: str) -> str:
     if content_type == "application/pdf":
-        return _from_pdf(filepath)
-    return _from_docx(filepath)
+        return _from_pdf(BytesIO(file_bytes))
+    return _from_docx(BytesIO(file_bytes))
 
 
 def detect_sections(text: str) -> list[str]:
-    """Return section labels whose keywords appear as standalone lines in the text."""
     lines = {line.strip().lower() for line in text.splitlines() if line.strip()}
     found = []
     for label, keywords in _SECTIONS.items():
@@ -37,9 +37,9 @@ def detect_sections(text: str) -> list[str]:
     return found
 
 
-def _from_pdf(filepath: str) -> str:
+def _from_pdf(file_obj: BytesIO) -> str:
     pages = []
-    with pdfplumber.open(filepath) as pdf:
+    with pdfplumber.open(file_obj) as pdf:
         for page in pdf.pages:
             text = page.extract_text()
             if text:
@@ -47,6 +47,6 @@ def _from_pdf(filepath: str) -> str:
     return "\n\n".join(pages)
 
 
-def _from_docx(filepath: str) -> str:
-    doc = Document(filepath)
+def _from_docx(file_obj: BytesIO) -> str:
+    doc = Document(file_obj)
     return "\n".join(p.text for p in doc.paragraphs if p.text.strip())

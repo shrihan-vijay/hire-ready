@@ -29,40 +29,45 @@ Full-stack AI resume copilot. Upload a resume, get an ATS score against a job de
 ```
 backend/app/
   api/
-    routes.py           ← Wires all sub-routers together
-    resume.py           ← /upload and /analyze endpoints
-    interview.py        ← /questions and /feedback endpoints
+    routes.py              ← Wires all sub-routers together
+    resume.py              ← /upload, /analyze, /history (GET+DELETE) endpoints
+    interview.py           ← /questions and /feedback endpoints
+    github_auth.py         ← GitHub OAuth connect/callback (origin-aware HMAC state)
   services/
-    resume_service.py   ← Orchestrates: validate → parse → chunk → embed
-    parser_service.py   ← Extracts text from PDF/DOCX, detects sections
-    chunker_service.py  ← Splits text into overlapping 200-word windows
-    embedder_service.py ← Embeds chunks + stores/queries ChromaDB
-    llm_service.py      ← Groq call for ATS scoring
-    interview_service.py← Groq calls for question generation + feedback
+    resume_service.py      ← Orchestrates: validate → parse → chunk → embed
+    parser_service.py      ← Extracts text from PDF/DOCX, detects sections
+    chunker_service.py     ← Splits text into overlapping 200-word windows
+    embedder_service.py    ← Embeds chunks + stores/queries ChromaDB; delete_chunks()
+    llm_service.py         ← Groq call for ATS scoring
+    interview_service.py   ← Groq calls for question generation + feedback
+    history_service.py     ← Supabase history: save (INSERT), fetch (grouped), delete
+    jd_fetcher_service.py  ← Fetches JD from URL: direct HTTP first, Jina Reader fallback
+    github_service.py      ← GitHub API calls (profile, repos)
   models/
-    resume.py           ← Pydantic models for upload/analyze
-    interview.py        ← Pydantic models for questions/feedback
+    resume.py              ← Pydantic models for upload/analyze/history (ResumeFile, AnalysisEntry)
+    interview.py           ← Pydantic models for questions/feedback
 
 frontend/src/
   context/
-    ResumeContext.tsx   ← Global state: parseResult, analyzeResult, jd
-    AuthContext.tsx     ← Auth state: user, session, signIn, signUp, signOut
+    ResumeContext.tsx      ← Global state: parseResult, analyzeResult, jd
+    AuthContext.tsx        ← Auth state: user, session, signIn, signUp, signOut
   lib/
-    supabase.ts         ← Supabase client singleton (reads from .env)
+    supabase.ts            ← Supabase client singleton (reads from .env)
   components/
-    ResumeUpload.tsx    ← Upload widget + JD input + ATS results
-    AuthGate.tsx        ← Sign-in/sign-up page shown at route /
-    HowItWorks.tsx      ← Interactive 4-step tutorial section
-    Logo.tsx            ← SVG logo component
+    ResumeUpload.tsx       ← Upload widget + JD input + ATS results
+    AuthGate.tsx           ← Sign-in/sign-up page shown at route /
+    HowItWorks.tsx         ← Interactive 4-step tutorial section
+    Logo.tsx               ← SVG logo component
   pages/
-    InterviewPage.tsx   ← Behavioral + role-specific interview prep
-    ProfilePage.tsx     ← Account info + sign out (sign-in form if guest)
-  App.tsx               ← Router, auth gate, nav with user avatar, score guide
+    InterviewPage.tsx      ← Behavioral + role-specific interview prep
+    ProfilePage.tsx        ← Account info + sign out (sign-in form if guest)
+    HistoryPage.tsx        ← Resume history: accordion by file, nested analyses, delete
+  App.tsx                  ← Router, ResumeProvider keyed on user ID, nav, score guide
 
 backend/app/core/
-  config.py             ← Env vars (now includes SUPABASE_URL, SUPABASE_ANON_KEY)
-  supabase.py           ← Supabase client singleton
-  auth.py               ← FastAPI dependencies: get_current_user, require_user
+  config.py                ← Env vars (SUPABASE_URL, SUPABASE_ANON_KEY, GITHUB_CLIENT_*)
+  supabase.py              ← Supabase client singleton
+  auth.py                  ← FastAPI dependencies: get_current_user, require_user
 ```
 
 **The key rule:** route handlers are thin — they receive the request, call a service, return the response. All logic lives in services. Swap S3 for local disk → change only `resume_service.py`. Swap Pinecone for ChromaDB → change only `embedder_service.py`. Swap OpenAI for Groq → change only `llm_service.py`.
@@ -103,6 +108,8 @@ Return { file_id, filename, word_count, sections } → frontend
 
 **Frontend** saves the response into `ResumeContext` — a React Context mounted above the router. Navigating to Interview Prep and back doesn't lose the data because the context lives outside the page components.
 
+An upload row is also INSERTed into `resume_history` (score=null) to anchor the `file_id` for history grouping.
+
 ---
 
 ## End-to-End Flow 2: ATS Analysis
@@ -131,6 +138,9 @@ Return AnalyzeResponse → frontend shows:
   - "What does this mean?" link → score guide section
   - "Prep for this interview" button → Interview Prep page
 ```
+
+**Why INSERT instead of UPDATE for history?**
+Each analysis is a new row so users can score the same resume against multiple job descriptions and see all results in History. Updating in-place would overwrite the previous score.
 
 **Why RAG instead of pasting the whole resume?**
 The JD is embedded into a vector and compared against resume chunk vectors. Only the _most relevant_ parts of the resume go into the LLM prompt — lower cost, better focus, and it scales to long documents.
@@ -184,6 +194,84 @@ User types answer → clicks "Get AI Feedback"
         ▼
 Feedback displayed below the textarea
 ```
+
+---
+
+## End-to-End Flow 4: Resume History
+
+```
+User navigates to /history
+        │
+        ▼  GET /api/resume/history  (Authorization: Bearer <JWT>)
+[history_service.get_user_history(user_id)]
+  - Fetches all rows from resume_history for this user, ordered by uploaded_at asc
+  - Groups by file_id in Python:
+      upload rows (score=null)   → set filename + uploaded_at for the group
+      analysis rows (score!=null) → append to analyses[] list
+  - Returns list sorted newest-first; analyses within each file sorted newest-first
+        │
+        ▼
+Frontend renders accordion:
+  - One card per file_id with filename, upload date, latest score badge
+  - Click to expand → all ATS analyses for that resume
+  - Each analysis: score badge, date, "View summary" toggle, skill chips, "Prep interview"
+  - Trash icon → inline confirmation → DELETE /api/resume/history/{file_id}
+        │
+        ▼  DELETE /api/resume/history/{file_id}
+[history_service.delete_resume_record(user_id, file_id)]
+  - Deletes all Supabase rows where user_id + file_id match
+[embedder_service.delete_chunks(file_id)]
+  - collection.get(where={"file_id": file_id}) → finds all chunk IDs
+  - collection.delete(ids=...) → removes vectors
+```
+
+**Why delete ChromaDB chunks on history delete?** The file_id is orphaned once the Supabase rows are gone — vectors would accumulate forever. `delete_chunks` is in `embedder_service.py` so the architectural rule holds: one service owns one storage concern.
+
+---
+
+## End-to-End Flow 5: GitHub OAuth
+
+```
+User clicks "Connect GitHub" on home upload card
+        │
+        ▼  GET /api/github/connect  (Authorization: Bearer <JWT>)
+[github_auth.py]
+  - Reads Origin header from request (e.g. http://127.0.0.1:5173)
+  - Validates against FRONTEND_URLS whitelist
+  - payload = "{user_id}|{origin}"
+  - state = base64(payload) + "." + HMAC-SHA256(payload)[:24]
+  - Redirects browser to GitHub authorize URL with state param
+        │
+        ▼  User authorizes → GitHub redirects to:
+        GET /api/github/callback?code=...&state=...
+[github_auth.py]
+  - Decodes base64, verifies HMAC signature
+  - Extracts user_id + origin from payload
+  - Exchanges code for GitHub access token
+  - Saves token to Supabase
+  - Redirects to {origin}/home?github=connected
+```
+
+**Why encode origin in state?** `localhost` and `127.0.0.1` are separate localStorage origins in browsers. If the callback hardcodes `localhost` but the user came from `127.0.0.1`, the Supabase session is invisible and they see a login page. Embedding the actual `Origin` header into the HMAC-signed state fixes this permanently.
+
+---
+
+## Supabase Schema
+
+```sql
+-- resume_history table (one row per upload OR per analysis)
+file_id        text         -- UUID from upload
+user_id        uuid         -- foreign key to auth.users
+filename       text         -- original filename
+score          int          -- null for upload rows; 0-100 for analysis rows
+matched_skills jsonb        -- array of strings
+missing_skills jsonb        -- array of strings
+jd_snippet     text         -- first 300 chars of the pasted JD
+summary        text         -- Groq-generated plain-English summary
+uploaded_at    timestamptz
+```
+
+`get_user_history` groups these rows by `file_id` in Python — upload rows (score=null) anchor the card header, analysis rows become the nested `analyses` list. The frontend never sees blank cards.
 
 ---
 
@@ -322,7 +410,15 @@ Storage is dumb — it has no concept of users. The association lives in the Pos
 
 **"How does authentication work in this app?"**
 
-> Authentication is handled by Supabase. On sign-in, Supabase's auth server verifies the credentials and returns a JWT. The Supabase JS client stores the JWT in localStorage and auto-refreshes it before expiry. Our AuthContext listens for auth state changes and sets the JWT as the default Authorization header on every axios request — so all API calls carry it automatically without any component needing to think about it. On the backend, a FastAPI dependency (`get_current_user` in `auth.py`) extracts the token and calls `supabase.auth.get_user()` to verify the signature. If the token is forged or expired, Supabase rejects it and we return a 401. The current endpoints support optional auth — they still work without a token — but `require_user` is available to lock down endpoints that must be tied to an account.
+> Authentication is handled by Supabase. On sign-in, Supabase's auth server verifies the credentials and returns a JWT. The Supabase JS client stores the JWT in localStorage and auto-refreshes it before expiry. Our AuthContext listens for auth state changes and sets the JWT as the default Authorization header on every axios request — so all API calls carry it automatically without any component needing to think about it. On the backend, a FastAPI dependency (`get_current_user` in `auth.py`) extracts the token and calls `supabase.auth.get_user()` to verify the signature. If the token is forged or expired, Supabase rejects it and we return a 401. The current endpoints support optional auth — they still work without a token — but `require_user` is available to lock down endpoints that must be tied to an account. When the user logs out, `ResumeProvider` is keyed on `user?.id ?? 'logged-out'` so it remounts with fresh empty state — the next login can't accidentally see the previous user's resume data.
+
+**"How does the resume history work, and why INSERT instead of UPDATE?"**
+
+> History is stored in a Supabase table called `resume_history`. There are two row types: upload rows (score=null, created on file upload) and analysis rows (score set, inserted on each ATS run). We INSERT new rows instead of updating because a user might analyze the same resume against five different job descriptions — UPDATE would silently overwrite every previous score. The `get_user_history` service groups rows by `file_id` in Python so the frontend sees one accordion card per resume with a nested list of all scores. Deleting a resume removes all Supabase rows for that file_id and calls `delete_chunks()` in `embedder_service.py` to clean up the ChromaDB vectors so they don't accumulate as orphans.
+
+**"How does GitHub OAuth work and what was tricky about it?"**
+
+> It's a standard three-leg OAuth flow — redirect to GitHub, get a code back, exchange for a token. The tricky part was the post-callback redirect. In development the frontend runs on both `localhost:5173` and `127.0.0.1:5173`, which browsers treat as completely separate localStorage origins. If you hardcode the redirect to `localhost` but the user came from `127.0.0.1`, the Supabase session is invisible after the redirect and they see a login page. The fix: read the `Origin` header from the `/connect` request, encode it with the user ID as `user_id|origin`, sign the payload with HMAC-SHA256 using the GitHub client secret, and pass it as the OAuth state parameter. The callback decodes and verifies it, then redirects to whichever origin is in the payload — so localhost and 127.0.0.1 both work correctly without any hardcoded URLs.
 
 **"How would you scale this for real users?"**
 
@@ -340,32 +436,38 @@ Storage is dumb — it has no concept of users. The association lives in the Pos
 
 ## What's Built
 
-| Feature                                 | Where                                                   |
-| --------------------------------------- | ------------------------------------------------------- |
-| Resume upload + validation              | `POST /api/resume/upload`, `resume_service.py`          |
-| PDF/DOCX parsing + section detection    | `parser_service.py`                                     |
-| Text chunking (overlapping windows)     | `chunker_service.py`                                    |
-| Local embeddings + ChromaDB storage     | `embedder_service.py`                                   |
-| ATS scoring via Groq                    | `POST /api/resume/analyze`, `llm_service.py`            |
-| Matched/missing skills + score ring     | `ResumeUpload.tsx`                                      |
-| Role-specific interview questions       | `POST /api/interview/questions`, `interview_service.py` |
-| Behavioral question bank (15 questions) | `InterviewPage.tsx` (hardcoded)                         |
-| AI feedback on answers                  | `POST /api/interview/feedback`, `interview_service.py`  |
-| All / One-by-one question views         | `InterviewPage.tsx`                                     |
-| Cross-page state persistence            | `ResumeContext.tsx`                                     |
-| Nav + SVG logo + user avatar            | `App.tsx`, `Logo.tsx`                                   |
-| ATS score guide section                 | `App.tsx`                                               |
-| Auth gate (sign in / sign up / guest)   | `AuthGate.tsx`, route `/`                               |
-| Supabase JWT auth — frontend            | `AuthContext.tsx`, `lib/supabase.ts`                    |
-| Supabase JWT auth — backend             | `core/auth.py`, `core/supabase.py`                      |
-| Profile page (account info + sign out)  | `ProfilePage.tsx`, route `/profile`                     |
+| Feature                                       | Where                                                             |
+| --------------------------------------------- | ----------------------------------------------------------------- |
+| Resume upload + validation                    | `POST /api/resume/upload`, `resume_service.py`                    |
+| PDF/DOCX parsing + section detection          | `parser_service.py`                                               |
+| Text chunking (overlapping windows)           | `chunker_service.py`                                              |
+| Local embeddings + ChromaDB storage           | `embedder_service.py`                                             |
+| ATS scoring via Groq                          | `POST /api/resume/analyze`, `llm_service.py`                      |
+| Matched/missing skills + score ring           | `ResumeUpload.tsx`                                                |
+| Resume history (accordion, nested analyses)   | `GET /api/resume/history`, `history_service.py`, `HistoryPage.tsx` |
+| Delete resume from history + ChromaDB cleanup | `DELETE /api/resume/history/{file_id}`, `delete_chunks()`         |
+| ATS summary saved + shown in history          | `summary` col in `resume_history`, `HistoryPage.tsx`              |
+| Context-aware upload card header              | `App.tsx` `HomePage` reads `parseResult`/`analyzeResult`          |
+| State reset on login/logout                   | `<ResumeProvider key={user?.id ?? 'logged-out'}>`                 |
+| GitHub OAuth (origin-aware HMAC state)        | `github_auth.py`                                                  |
+| JD URL fetch (direct HTTP + Jina fallback)    | `POST /api/resume/fetch-jd`, `jd_fetcher_service.py`             |
+| Role-specific interview questions             | `POST /api/interview/questions`, `interview_service.py`           |
+| Behavioral question bank (15 questions)       | `InterviewPage.tsx` (hardcoded)                                   |
+| AI feedback on answers                        | `POST /api/interview/feedback`, `interview_service.py`            |
+| All / One-by-one question views               | `InterviewPage.tsx`                                               |
+| Cross-page state persistence                  | `ResumeContext.tsx`                                               |
+| Nav + SVG logo + user avatar                  | `App.tsx`, `Logo.tsx`                                             |
+| ATS score guide section                       | `App.tsx`                                                         |
+| Auth gate (sign in / sign up / guest)         | `AuthGate.tsx`, route `/`                                         |
+| Supabase JWT auth — frontend                  | `AuthContext.tsx`, `lib/supabase.ts`                              |
+| Supabase JWT auth — backend                   | `core/auth.py`, `core/supabase.py`                                |
+| Profile page (account info + sign out)        | `ProfilePage.tsx`, route `/profile`                               |
 
 ## What's Next
 
 | Feature                       | Notes                                                   |
 | ----------------------------- | ------------------------------------------------------- |
 | Supabase Storage + PostgreSQL | Move files off local disk; tie uploads to user accounts |
-| Resume history                | List of past uploads and scores per user                |
-| MCP integrations              | Web fetch (auto-pull JD from URL), GitHub, LinkedIn     |
+| MCP integrations              | LinkedIn JD fetch, deeper GitHub profile integration    |
 | Chatbot                       | Conversational AI assistant within the app              |
 | Voice recognition             | Speak interview answers (Web Speech API or Whisper)     |

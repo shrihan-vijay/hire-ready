@@ -42,6 +42,8 @@ export function HistoryPage() {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
   const [expandedSummary, setExpandedSummary] = useState<string | null>(null)
+  const [confirmDeleteScore, setConfirmDeleteScore] = useState<string | null>(null) // analyzed_at
+  const [deletingScore, setDeletingScore] = useState<string | null>(null)
 
   useEffect(() => {
     if (!user) return
@@ -64,6 +66,23 @@ export function HistoryPage() {
     } finally {
       setDeleting(null)
       setConfirmDelete(null)
+    }
+  }
+
+  async function handleDeleteScore(file_id: string, analyzed_at: string) {
+    setDeletingScore(analyzed_at)
+    try {
+      await axios.delete(`${API}/api/resume/history/${file_id}/score`, {
+        params: { at: analyzed_at },
+      })
+      setHistory(h => h.map(r =>
+        r.file_id === file_id
+          ? { ...r, analyses: r.analyses.filter(a => a.analyzed_at !== analyzed_at) }
+          : r
+      ))
+    } finally {
+      setDeletingScore(null)
+      setConfirmDeleteScore(null)
     }
   }
 
@@ -105,7 +124,6 @@ export function HistoryPage() {
       <div className="history-list">
         {!fetching && history.map(item => {
           const isOpen = expanded === item.file_id
-          const topScore = item.analyses[0]?.score ?? null
 
           return (
             <div key={item.file_id} className={`history-card ${isOpen ? 'history-card--open' : ''}`}>
@@ -139,11 +157,6 @@ export function HistoryPage() {
                     </div>
                   </div>
                   <div className="history-card-right">
-                    {topScore !== null && (
-                      <span className="history-top-score" style={{ background: scoreColor(topScore) }}>
-                        {topScore}
-                      </span>
-                    )}
                     {item.analyses.length > 1 && (
                       <span className="history-count">{item.analyses.length} scores</span>
                     )}
@@ -170,44 +183,75 @@ export function HistoryPage() {
                     item.analyses.map((a, i) => {
                       const summaryKey = `${item.file_id}-${i}`
                       const summaryOpen = expandedSummary === summaryKey
+                      const isConfirmingScore = confirmDeleteScore === a.analyzed_at
+                      const isDeletingScore = deletingScore === a.analyzed_at
+
                       return (
-                      <div key={i} className="history-analysis-row">
-                        <div className="history-analysis-header">
-                          <span className="history-score-badge" style={{ background: scoreColor(a.score) }}>
-                            {a.score}
-                          </span>
-                          <span className="history-analysis-date">{formatDate(a.analyzed_at)}</span>
-                          {a.summary && (
-                            <button
-                              className="history-summary-toggle"
-                              onClick={() => setExpandedSummary(summaryOpen ? null : summaryKey)}
-                            >
-                              {summaryOpen ? 'Hide summary' : 'View summary'}
-                            </button>
+                        <div key={a.analyzed_at} className="history-analysis-row">
+                          {isConfirmingScore ? (
+                            <div className="history-score-confirm-row">
+                              <span className="history-confirm-msg">Delete this score?</span>
+                              <button
+                                className="history-confirm-btn history-confirm-btn--cancel"
+                                onClick={() => setConfirmDeleteScore(null)}
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                className="history-confirm-btn history-confirm-btn--delete"
+                                disabled={isDeletingScore}
+                                onClick={() => handleDeleteScore(item.file_id, a.analyzed_at)}
+                              >
+                                {isDeletingScore ? 'Deleting…' : 'Delete'}
+                              </button>
+                            </div>
+                          ) : (
+                            <>
+                              <div className="history-analysis-header">
+                                <span className="history-score-badge" style={{ background: scoreColor(a.score) }}>
+                                  {a.score}
+                                </span>
+                                <span className="history-analysis-date">{formatDate(a.analyzed_at)}</span>
+                                {a.summary && (
+                                  <button
+                                    className="history-summary-toggle"
+                                    onClick={() => setExpandedSummary(summaryOpen ? null : summaryKey)}
+                                  >
+                                    {summaryOpen ? 'Hide summary' : 'View summary'}
+                                  </button>
+                                )}
+                                <button
+                                  className="history-score-delete-btn"
+                                  onClick={() => setConfirmDeleteScore(a.analyzed_at)}
+                                  aria-label="Delete this score"
+                                >
+                                  <Trash2 size={12} />
+                                </button>
+                              </div>
+                              {summaryOpen && a.summary && (
+                                <p className="history-summary">{a.summary}</p>
+                              )}
+                              <div className="history-skills">
+                                {a.matched_skills.slice(0, 4).map(s => (
+                                  <span key={s} className="history-skill-tag matched">{s}</span>
+                                ))}
+                                {a.missing_skills.slice(0, 3).map(s => (
+                                  <span key={s} className="history-skill-tag missing">{s}</span>
+                                ))}
+                              </div>
+                              <button
+                                className="history-prep-btn"
+                                onClick={() => navigate('/interview', {
+                                  state: { file_id: item.file_id, job_description: a.jd_snippet ?? '' },
+                                })}
+                              >
+                                <MessageSquare size={13} />
+                                Prep interview
+                              </button>
+                            </>
                           )}
                         </div>
-                        {summaryOpen && a.summary && (
-                          <p className="history-summary">{a.summary}</p>
-                        )}
-                        <div className="history-skills">
-                          {a.matched_skills.slice(0, 4).map(s => (
-                            <span key={s} className="history-skill-tag matched">{s}</span>
-                          ))}
-                          {a.missing_skills.slice(0, 3).map(s => (
-                            <span key={s} className="history-skill-tag missing">{s}</span>
-                          ))}
-                        </div>
-                        <button
-                          className="history-prep-btn"
-                          onClick={() => navigate('/interview', {
-                            state: { file_id: item.file_id, job_description: a.jd_snippet ?? '' },
-                          })}
-                        >
-                          <MessageSquare size={13} />
-                          Prep interview
-                        </button>
-                      </div>
-                    )
+                      )
                     })
                   )}
                 </div>

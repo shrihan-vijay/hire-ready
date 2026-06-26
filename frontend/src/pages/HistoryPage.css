@@ -247,6 +247,34 @@
   gap: 10px;
 }
 
+.history-score-delete-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  border: none;
+  background: none;
+  color: #d1d5db;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.history-score-delete-btn:hover {
+  background: #fee2e2;
+  color: #ef4444;
+}
+
+.history-score-confirm-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .history-score-badge {
   min-width: 34px;
   height: 26px;

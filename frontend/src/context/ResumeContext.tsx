@@ -12,6 +12,7 @@ export interface AnalyzeResult {
   score: number
   matched_skills: string[]
   missing_skills: string[]
+  qualification_gaps: string[]
   summary: string
   github_enriched: boolean
 }
