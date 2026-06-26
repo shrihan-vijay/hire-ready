@@ -1,5 +1,6 @@
 import json
 import os
+from typing import Tuple
 
 from groq import Groq
 
@@ -85,3 +86,11 @@ Keep the whole response under 200 words. Be direct. Be useful."""
     )
 
     return response.choices[0].message.content.strip()
+
+
+def transcribe_audio(file_bytes: bytes, filename: str, content_type: str) -> str:
+    result = _get_client().audio.transcriptions.create(
+        file=(filename, file_bytes, content_type),
+        model="whisper-large-v3",
+    )
+    return result.text

@@ -82,3 +82,19 @@ Respond with a JSON object in this exact format (no markdown, no code blocks, ju
         start = raw.find("{")
         end = raw.rfind("}") + 1
         return json.loads(raw[start:end])
+
+
+def is_valid_job_description(text: str) -> bool:
+    response = _get_client().chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{
+            "role": "user",
+            "content": (
+                "Does the following text appear to be a real job description or job posting? "
+                "Reply with only 'yes' or 'no'.\n\n" + text[:800]
+            ),
+        }],
+        temperature=0,
+        max_tokens=3,
+    )
+    return response.choices[0].message.content.strip().lower().startswith("y")

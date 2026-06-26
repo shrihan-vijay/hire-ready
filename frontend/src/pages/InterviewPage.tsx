@@ -12,6 +12,7 @@ import {
   Sparkles,
   MessageSquare,
   List,
+  Square,
 } from 'lucide-react'
 import './InterviewPage.css'
 
@@ -141,17 +142,22 @@ function OneByOneCard({
           autoFocus
         />
 
-        <button
-          className="ip-feedback-btn"
-          disabled={!state.answer.trim() || state.loadingFeedback}
-          onClick={() => onFeedback(q)}
-        >
-          {state.loadingFeedback ? (
-            <><Loader2 size={15} className="spin" /> Getting feedback…</>
-          ) : (
-            <><MessageSquare size={15} /> Get AI Feedback</>
-          )}
-        </button>
+        <div className="ip-actions-row">
+          <VoiceMicButton
+            onTranscript={(text) => onChangeAnswer(q.id, (state.answer ? state.answer + ' ' : '') + text)}
+          />
+          <button
+            className="ip-feedback-btn"
+            disabled={!state.answer.trim() || state.loadingFeedback}
+            onClick={() => onFeedback(q)}
+          >
+            {state.loadingFeedback ? (
+              <><Loader2 size={15} className="spin" /> Getting feedback…</>
+            ) : (
+              <><MessageSquare size={15} /> Get AI Feedback</>
+            )}
+          </button>
+        </div>
 
         {state.answer.trim() && state.answer.trim().split(/\s+/).length < 10 && !state.loadingFeedback && (
           <p className="ip-answer-warning">⚠ Give a complete answer first — the AI can only coach what you write.</p>
@@ -176,6 +182,65 @@ function OneByOneCard({
         ))}
       </div>
     </div>
+  )
+}
+
+function VoiceMicButton({ onTranscript }: { onTranscript: (text: string) => void }) {
+  const [recState, setRecState] = useState<'idle' | 'recording' | 'transcribing'>('idle')
+  const recorderRef = useRef<MediaRecorder | null>(null)
+  const chunksRef = useRef<Blob[]>([])
+  const streamRef = useRef<MediaStream | null>(null)
+
+  async function toggle() {
+    if (recState === 'recording') {
+      recorderRef.current?.stop()
+      streamRef.current?.getTracks().forEach((t) => t.stop())
+      return
+    }
+    if (recState !== 'idle') return
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      streamRef.current = stream
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/mp4')
+        ? 'audio/mp4'
+        : ''
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+      chunksRef.current = []
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data) }
+      recorder.onstop = async () => {
+        setRecState('transcribing')
+        const blobType = recorder.mimeType || 'audio/webm'
+        const ext = blobType.includes('mp4') ? 'mp4' : blobType.includes('ogg') ? 'ogg' : 'webm'
+        const blob = new Blob(chunksRef.current, { type: blobType })
+        try {
+          const fd = new FormData()
+          fd.append('file', blob, `recording.${ext}`)
+          const res = await axios.post<{ text: string }>(`${apiBaseUrl}/api/interview/transcribe`, fd)
+          if (res.data.text) onTranscript(res.data.text)
+        } catch { /* silent on network error */ } finally {
+          setRecState('idle')
+        }
+      }
+      recorder.start()
+      recorderRef.current = recorder
+      setRecState('recording')
+    } catch { /* microphone permission denied */ }
+  }
+
+  return (
+    <button
+      type="button"
+      className={`ip-mic-btn ip-mic-btn--${recState}`}
+      onClick={toggle}
+      disabled={recState === 'transcribing'}
+      title={recState === 'idle' ? 'Record your answer' : recState === 'recording' ? 'Stop recording' : 'Transcribing…'}
+    >
+      {recState === 'idle' && <><Mic size={13} /> Record</>}
+      {recState === 'recording' && <><Square size={13} /> Stop</>}
+      {recState === 'transcribing' && <><Loader2 size={13} className="spin" /> Transcribing…</>}
+    </button>
   )
 }
 
@@ -233,17 +298,22 @@ function QuestionCard({
             onChange={(e) => onChange(e.target.value)}
           />
 
-          <button
-            className="ip-feedback-btn"
-            disabled={!state.answer.trim() || state.loadingFeedback}
-            onClick={onFeedback}
-          >
-            {state.loadingFeedback ? (
-              <><Loader2 size={15} className="spin" /> Getting feedback…</>
-            ) : (
-              <><MessageSquare size={15} /> Get AI Feedback</>
-            )}
-          </button>
+          <div className="ip-actions-row">
+            <VoiceMicButton
+              onTranscript={(text) => onChange((state.answer ? state.answer + ' ' : '') + text)}
+            />
+            <button
+              className="ip-feedback-btn"
+              disabled={!state.answer.trim() || state.loadingFeedback}
+              onClick={onFeedback}
+            >
+              {state.loadingFeedback ? (
+                <><Loader2 size={15} className="spin" /> Getting feedback…</>
+              ) : (
+                <><MessageSquare size={15} /> Get AI Feedback</>
+              )}
+            </button>
+          </div>
 
           {state.answer.trim() && state.answer.trim().split(/\s+/).length < 10 && !state.loadingFeedback && (
             <p className="ip-answer-warning">⚠ Give a complete answer first — the AI can only coach what you write.</p>
@@ -292,6 +362,10 @@ export function InterviewPage() {
 
   async function fetchRoleQuestions() {
     if (!jd.trim()) return
+    if (jd.trim().split(/\s+/).length < 20) {
+      setGenerateError('Job description is not long enough.')
+      return
+    }
     setGenerating(true)
     setGenerateError('')
     setRoleQuestions([])
@@ -303,8 +377,9 @@ export function InterviewPage() {
       const qs = res.data.questions.map((q, i) => ({ ...q, id: `r${i}` }))
       setRoleQuestions(qs)
       setRoleStates(initStates(qs))
-    } catch {
-      setGenerateError('Failed to generate questions. Please try again.')
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setGenerateError(detail ?? 'Failed to generate questions. Please try again.')
     } finally {
       setGenerating(false)
     }

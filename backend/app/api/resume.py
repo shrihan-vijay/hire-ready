@@ -10,7 +10,7 @@ from app.core.config import GITHUB_TOKEN
 from app.services.github_connection_service import get_github_connection
 from app.services.github_service import fetch_github_profile
 from app.services.jd_fetcher_service import fetch_jd_from_url
-from app.services.llm_service import analyze_resume
+from app.services.llm_service import analyze_resume, is_valid_job_description
 from app.services.resume_service import save_resume
 
 router = APIRouter()
@@ -45,6 +45,11 @@ async def analyze(
         raise HTTPException(
             status_code=422,
             detail="Job description is too short to score against. Please paste a complete job description describing the role and its requirements.",
+        )
+    if not is_valid_job_description(body.job_description):
+        raise HTTPException(
+            status_code=422,
+            detail="This doesn't look like a real job description. Please paste an actual job posting.",
         )
 
     chunks = query_resume(body.file_id, body.job_description)
