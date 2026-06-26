@@ -20,6 +20,7 @@ import { InterviewPage } from './pages/InterviewPage'
 import { HistoryPage } from './pages/HistoryPage'
 import { ResumeProvider, useResume } from './context/ResumeContext'
 import { useAuth } from './context/AuthContext'
+import { ChatBot } from './components/ChatBot'
 import './App.css'
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
@@ -232,6 +233,8 @@ function AppInner({
         <Route path="/history" element={isAuthed ? <HistoryPage /> : <Navigate to="/" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+
+      {isAuthed && !onAuthPage && <ChatBot />}
     </>
   )
 }
