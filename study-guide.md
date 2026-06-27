@@ -6,21 +6,22 @@ Full-stack AI resume copilot. Upload a resume, get an ATS score against a job de
 
 ## Tech Stack
 
-| Layer        | Technology            | Purpose                                                       |
-| ------------ | --------------------- | ------------------------------------------------------------- |
-| Frontend     | React + TypeScript    | UI, routing, state management                                 |
-| Build tool   | Vite                  | Dev server + bundler                                          |
-| Routing      | React Router v7       | Client-side navigation (Home, Interview, Profile)             |
-| State        | React Context         | Persist resume/analysis state across pages                    |
-| HTTP client  | axios                 | Frontend → backend requests                                   |
-| Auth         | Supabase              | User accounts, JWT sessions, hosted PostgreSQL + file storage |
-| Backend      | FastAPI (Python)      | API server, business logic                                    |
-| Validation   | Pydantic              | Request/response type enforcement                             |
-| PDF parser   | pdfplumber            | Extracts text from PDF files                                  |
-| DOCX parser  | python-docx           | Extracts text from Word files                                 |
-| Embeddings   | sentence-transformers | Local model — converts text → vectors                         |
-| Vector store | ChromaDB              | Persists and searches resume chunk embeddings                 |
-| LLM          | Groq (llama-3.3-70b)  | ATS scoring, question generation, feedback                    |
+| Layer         | Technology              | Purpose                                                       |
+| ------------- | ----------------------- | ------------------------------------------------------------- |
+| Frontend      | React + TypeScript      | UI, routing, state management                                 |
+| Build tool    | Vite                    | Dev server + bundler                                          |
+| Routing       | React Router v7         | Client-side navigation (Home, Interview, Profile)             |
+| State         | React Context           | Persist resume/analysis state across pages                    |
+| HTTP client   | axios                   | Frontend → backend requests                                   |
+| Auth          | Supabase                | User accounts, JWT sessions, hosted PostgreSQL + file storage |
+| Backend       | FastAPI (Python)        | API server, business logic                                    |
+| Validation    | Pydantic                | Request/response type enforcement                             |
+| PDF parser    | pdfplumber              | Extracts text from PDF files                                  |
+| DOCX parser   | python-docx             | Extracts text from Word files                                 |
+| Embeddings    | sentence-transformers   | Local model — converts text → vectors                         |
+| Vector store  | ChromaDB                | Persists and searches resume chunk embeddings                 |
+| LLM           | Groq (llama-3.3-70b)    | ATS scoring, question generation, feedback, chatbot streaming |
+| Transcription | Groq (whisper-large-v3) | Voice answer recording → text in interview prep               |
 
 ---
 
@@ -30,39 +31,43 @@ Full-stack AI resume copilot. Upload a resume, get an ATS score against a job de
 backend/app/
   api/
     routes.py              ← Wires all sub-routers together
-    resume.py              ← /upload, /analyze, /history (GET+DELETE) endpoints
-    interview.py           ← /questions and /feedback endpoints
+    resume.py              ← /upload, /analyze, /history (GET+DELETE), /history/{id}/score endpoints
+    interview.py           ← /questions, /feedback, /transcribe endpoints
+    chat.py                ← /chat SSE streaming endpoint
     github_auth.py         ← GitHub OAuth connect/callback (origin-aware HMAC state)
   services/
-    resume_service.py      ← Orchestrates: validate → parse → chunk → embed
-    parser_service.py      ← Extracts text from PDF/DOCX, detects sections
+    resume_service.py      ← Orchestrates: validate → upload to Supabase Storage → parse via BytesIO → chunk → embed
+    parser_service.py      ← Extracts text from PDF/DOCX via BytesIO (no disk writes)
     chunker_service.py     ← Splits text into overlapping 200-word windows
     embedder_service.py    ← Embeds chunks + stores/queries ChromaDB; delete_chunks()
-    llm_service.py         ← Groq call for ATS scoring
-    interview_service.py   ← Groq calls for question generation + feedback
-    history_service.py     ← Supabase history: save (INSERT), fetch (grouped), delete
+    llm_service.py         ← Groq: ATS scoring + is_valid_job_description() (shared validator)
+    interview_service.py   ← Groq: question generation, feedback, Whisper transcription
+    chat_service.py        ← Groq: streaming chatbot with resume RAG context
+    history_service.py     ← Supabase history: save (INSERT), fetch (grouped), delete, delete_analysis_entry
     jd_fetcher_service.py  ← Fetches JD from URL: direct HTTP first, Jina Reader fallback
     github_service.py      ← GitHub API calls (profile, repos)
   models/
-    resume.py              ← Pydantic models for upload/analyze/history (ResumeFile, AnalysisEntry)
+    resume.py              ← Pydantic models for upload/analyze/history (includes qualification_gaps)
     interview.py           ← Pydantic models for questions/feedback
+    chat.py                ← Pydantic models: ChatMessage, ChatRequest
 
 frontend/src/
   context/
-    ResumeContext.tsx      ← Global state: parseResult, analyzeResult, jd
+    ResumeContext.tsx      ← Global state: parseResult, analyzeResult, jd, qualification_gaps
     AuthContext.tsx        ← Auth state: user, session, signIn, signUp, signOut
   lib/
     supabase.ts            ← Supabase client singleton (reads from .env)
   components/
-    ResumeUpload.tsx       ← Upload widget + JD input + ATS results
+    ResumeUpload.tsx       ← Upload widget + JD input + ATS results + qualification gaps
     AuthGate.tsx           ← Sign-in/sign-up page shown at route /
     HowItWorks.tsx         ← Interactive 4-step tutorial section
     Logo.tsx               ← SVG logo component
+    ChatBot.tsx            ← Floating chat widget (SSE streaming, RAG resume context)
   pages/
-    InterviewPage.tsx      ← Behavioral + role-specific interview prep
+    InterviewPage.tsx      ← Behavioral + role-specific prep + VoiceMicButton
     ProfilePage.tsx        ← Account info + sign out (sign-in form if guest)
-    HistoryPage.tsx        ← Resume history: accordion by file, nested analyses, delete
-  App.tsx                  ← Router, ResumeProvider keyed on user ID, nav, score guide
+    HistoryPage.tsx        ← Resume history: accordion by file, nested analyses, per-score delete
+  App.tsx                  ← Router, ResumeProvider keyed on user ID, nav, score guide, ChatBot
 
 backend/app/core/
   config.py                ← Env vars (SUPABASE_URL, SUPABASE_ANON_KEY, GITHUB_CLIENT_*)
@@ -82,25 +87,25 @@ User drops PDF/DOCX → clicks "Upload & Analyze"
         ▼  POST /api/resume/upload (multipart/form-data)
 [resume_service.py]
   1. Validate content type — PDF or DOCX only (400 if not)
-  2. Read all bytes, enforce 5 MB limit (400 if over)
-  3. Generate UUID filename → write to backend/uploads/
+  2. Read all bytes into memory, enforce 5 MB limit (400 if over)
+  3. Generate UUID → upload bytes to Supabase Storage bucket "resumes"
+     (no file ever written to disk)
         │
         ▼
 [parser_service.py]
-  4. pdfplumber (PDF) or python-docx (DOCX) → plain text
+  4. Pass bytes as BytesIO to pdfplumber (PDF) or python-docx (DOCX) → plain text
   5. Regex scan each line for section keywords → detected sections list
-  6. Save text to backend/uploads/<uuid>.txt
         │
         ▼
 [chunker_service.py]
-  7. Split text into 200-word overlapping windows (40-word overlap)
+  6. Split text into 200-word overlapping windows (40-word overlap)
      Why overlap? A sentence crossing a boundary appears in both chunks
      so it's never missed during retrieval
         │
         ▼
 [embedder_service.py]
-  8. all-MiniLM-L6-v2 (local, ~90MB) encodes each chunk → 384-dim vector
-  9. Store in ChromaDB: { text, vector, file_id, chunk_index }
+  7. all-MiniLM-L6-v2 (local, ~90MB) encodes each chunk → 384-dim vector
+  8. Store in ChromaDB: { text, vector, file_id, chunk_index }
         │
         ▼
 Return { file_id, filename, word_count, sections } → frontend
@@ -118,6 +123,12 @@ An upload row is also INSERTed into `resume_history` (score=null) to anchor the 
 User pastes job description → clicks "Analyze Match"
         │
         ▼  POST /api/resume/analyze  { file_id, job_description }
+[resume.py route]
+  - < 20 words → 422 immediately (no LLM call)
+  - ≥ 20 words → llm_service.is_valid_job_description() — fast yes/no Groq call
+  - Not a real JD → 422 "This doesn't look like a real job description"
+        │
+        ▼
 [embedder_service.query_resume()]
   - Embed the JD using the same all-MiniLM-L6-v2 model
   - ChromaDB cosine similarity search, filtered to this file_id
@@ -126,14 +137,16 @@ User pastes job description → clicks "Analyze Match"
         ▼
 [llm_service.analyze_resume(chunks, job_description)]
   - Sends chunks + JD to Groq (llama-3.3-70b-versatile)
-  - Prompt asks for JSON: { score, matched_skills, missing_skills, summary }
-  - LLM reasons over the resume content vs JD requirements
+  - Scores across TWO dimensions: skills/keywords AND stated qualifications
+    (years of experience, degree requirements, certifications)
+  - Returns JSON: { score, matched_skills, missing_skills, qualification_gaps, summary }
         │
         ▼
 Return AnalyzeResponse → frontend shows:
   - Animated score ring (color: green ≥70, amber ≥45, red <45)
   - Matched skills (green badges)
   - Missing skills (red badges)
+  - Qualification gaps (amber warning box — stated JD requirements not met)
   - Plain-English summary
   - "What does this mean?" link → score guide section
   - "Prep for this interview" button → Interview Prep page
@@ -161,6 +174,11 @@ Questions are **hardcoded on the frontend** — 15 questions across 5 categories
 User clicks "Prep for this interview" after ATS analysis
         │  (React Router passes { file_id, job_description } as state)
         ▼  POST /api/interview/questions  { file_id, job_description }
+[interview.py route]
+  - < 20 words → 422 immediately
+  - is_valid_job_description() → 422 if gibberish (error shown on submit, not while typing)
+        │
+        ▼
 [embedder_service.query_resume(file_id, job_description)]
   - Same ChromaDB lookup — pulls resume chunks most relevant to the JD
         │
@@ -175,10 +193,30 @@ User clicks "Prep for this interview" after ATS analysis
 Frontend renders question cards (All view or One-by-one view)
 ```
 
+### Voice Answer Recording
+
+```
+User clicks mic button (Record) next to textarea
+        │
+        ▼  MediaRecorder.getUserMedia({ audio: true })
+  - auto-picks audio/mp4 (Safari) or audio/webm;codecs=opus (Chrome)
+  - button turns red + pulsing while recording
+        │
+User clicks Stop
+        │
+        ▼  POST /api/interview/transcribe  (multipart audio file)
+[interview_service.transcribe_audio(bytes, filename, content_type)]
+  - Calls Groq whisper-large-v3
+  - Returns { text }
+        │
+        ▼
+Transcript appended to existing answer text in the textarea
+```
+
 ### AI Feedback on Answers
 
 ```
-User types answer → clicks "Get AI Feedback"
+User types/records answer → clicks "Get AI Feedback"
         │
         ▼  POST /api/interview/feedback  { question, user_answer, file_id }
 [embedder_service.query_resume(file_id, question)]
@@ -197,7 +235,43 @@ Feedback displayed below the textarea
 
 ---
 
-## End-to-End Flow 4: Resume History
+## End-to-End Flow 4: Chatbot
+
+Floating chat widget visible on all pages once authed. Auto-injects resume + JD context when available.
+
+```
+User opens chat panel → types message → hits Enter
+        │
+        ▼  POST /api/chat/  { messages, file_id?, job_description? }
+[chat.py route]
+  - if file_id present: query_resume(file_id, last_user_message) → top resume chunks
+        │
+        ▼
+[chat_service.stream_chat(messages, resume_chunks, job_description)]
+  - Builds system prompt:
+      "You are HireReady's career AI..."
+      + [if chunks] USER'S RESUME: {chunks}
+      + [if jd] TARGET JOB DESCRIPTION: {jd[:1500]}
+      + [if no resume] direct user to upload/select rather than paste in chat
+  - Calls Groq with stream=True
+  - Yields each token as it arrives
+        │
+        ▼  StreamingResponse (text/event-stream)
+  data: {"token": "Here"}\n\n
+  data: {"token": " are"}\n\n
+  ...
+  data: [DONE]\n\n
+        │
+        ▼  Frontend ReadableStream
+  - Each token appended to the last assistant message in state
+  - Auto-scrolls to bottom
+```
+
+**Key design:** The chatbot has context only when a resume is loaded in the current session (uploaded or selected via "Use previous resume"). Clicking "Use previous resume" sets `parseResult.file_id` in `ResumeContext`, which the chatbot picks up automatically — previous resumes are readable, they just need to be selected first.
+
+---
+
+## End-to-End Flow 6: Resume History
 
 ```
 User navigates to /history
@@ -229,7 +303,7 @@ Frontend renders accordion:
 
 ---
 
-## End-to-End Flow 5: GitHub OAuth
+## End-to-End Flow 7: GitHub OAuth
 
 ```
 User clicks "Connect GitHub" on home upload card
@@ -370,23 +444,19 @@ JWTs expire after 1 hour. The Supabase JS client silently refreshes them using a
 
 ---
 
-## Local Storage vs Supabase Storage
+## Supabase Storage
 
-Files currently write to `backend/uploads/`. For production, Supabase replaces both S3 and a separate database:
-
-- **Supabase Storage** = S3-compatible object store (same concept as AWS S3, built in)
-- **Supabase PostgreSQL** = relational database (built in, same project)
-- No separate AWS account needed
+Files are stored in Supabase Storage (a hosted S3-compatible object store) — no local disk involved. On upload, bytes are read into memory and uploaded directly to the `resumes` bucket with the UUID as the key. `parser_service.py` receives bytes and opens them via `BytesIO`, so pdfplumber and python-docx never touch disk.
 
 ```
-Supabase Storage bucket: resumes/<uuid>.pdf
-
-Supabase PostgreSQL — files table:
-  file_id | user_id  | storage_key              | uploaded_at
-  uuid1   | user_abc | resumes/uuid1.pdf        | 2026-06-25
+Supabase Storage bucket: resumes/<uuid>.pdf  (or .docx)
+ChromaDB:                file_id → embedded chunks
+resume_history table:    file_id + user_id → scores, metadata
 ```
 
-Storage is dumb — it has no concept of users. The association lives in the PostgreSQL table. You query the DB for the key, then fetch from Storage. The only code change: two lines in `resume_service.py`.
+The `file_id` is the key that ties all three together. Deleting a resume means: delete the Supabase history rows, delete the ChromaDB chunks. The storage object itself is retained (could be cleaned up with a Supabase storage delete call if needed).
+
+The next step for production would be adding a proper `files` table with `user_id` as a foreign key, so the app can list a user's uploaded files without relying on `resume_history` upload rows.
 
 ---
 
@@ -420,6 +490,18 @@ Storage is dumb — it has no concept of users. The association lives in the Pos
 
 > It's a standard three-leg OAuth flow — redirect to GitHub, get a code back, exchange for a token. The tricky part was the post-callback redirect. In development the frontend runs on both `localhost:5173` and `127.0.0.1:5173`, which browsers treat as completely separate localStorage origins. If you hardcode the redirect to `localhost` but the user came from `127.0.0.1`, the Supabase session is invisible after the redirect and they see a login page. The fix: read the `Origin` header from the `/connect` request, encode it with the user ID as `user_id|origin`, sign the payload with HMAC-SHA256 using the GitHub client secret, and pass it as the OAuth state parameter. The callback decodes and verifies it, then redirects to whichever origin is in the payload — so localhost and 127.0.0.1 both work correctly without any hardcoded URLs.
 
+**"How does the chatbot work and what context does it have?"**
+
+> The chatbot is a floating widget that streams responses token-by-token using Server-Sent Events. When the user sends a message, the frontend POSTs to `/api/chat/` with the conversation history plus the current `file_id` and `job_description` from React Context. The backend queries ChromaDB with the last user message to retrieve the most relevant resume chunks, then builds a system prompt with those chunks and the JD. That prompt goes to Groq with `stream=True` — each token is yielded as a `data: {"token": "..."}` SSE event. The frontend reads the stream with a `ReadableStream` reader and appends each token to the last message in state, giving a real-time typing effect. If no resume is loaded, the system prompt instructs the LLM to direct the user to upload or select one — it never asks users to paste their resume in the chat window.
+
+**"How does voice recording work across Safari and Chrome?"**
+
+> The Web Speech API only works in Chrome/Edge, so we use `MediaRecorder` + Groq Whisper instead, which works in all modern browsers. The `VoiceMicButton` component calls `getUserMedia({ audio: true })` for mic permission, then starts a `MediaRecorder`. It detects the best supported MIME type — `audio/webm;codecs=opus` for Chrome, `audio/mp4` for Safari — using `MediaRecorder.isTypeSupported()`. On stop, it assembles the recorded chunks into a Blob and POSTs it as multipart form data to `/api/interview/transcribe`. The backend strips the codec suffix from the content-type header, calls Groq's `whisper-large-v3` model, and returns the transcript. The transcript is appended to whatever the user has already typed, so typing and speaking can be mixed freely.
+
+**"How do you prevent garbage input from getting an ATS score or interview questions?"**
+
+> Two layers. First, a word count check — fewer than 20 words gets rejected immediately before any LLM call. Second, a semantic check: a fast Groq call with `max_tokens=3` asks "is this a real job description?" and returns yes/no. This costs almost nothing but catches multi-word gibberish that passes the word count. Both checks live in shared code — `is_valid_job_description()` in `llm_service.py` — so `/analyze` and `/questions` use the exact same validation without duplication. On the frontend, the error only appears when the user clicks submit, not while they're typing — this avoids distracting mid-composition warnings.
+
 **"How would you scale this for real users?"**
 
 > Files move from local disk to Supabase Storage (one line in `resume_service.py`). ChromaDB moves to Pinecone or Weaviate (one line in `embedder_service.py`). A Supabase PostgreSQL table maps file IDs to user accounts — the `file_id` already acts as the key across the entire pipeline, so adding a `user_id` foreign key is the main schema change. Groq swaps to OpenAI or Anthropic for production-grade SLAs (one line in the LLM services). Supabase's Row Level Security lets us enforce "users can only see their own rows" at the database level without any backend code change.
@@ -436,38 +518,42 @@ Storage is dumb — it has no concept of users. The association lives in the Pos
 
 ## What's Built
 
-| Feature                                       | Where                                                             |
-| --------------------------------------------- | ----------------------------------------------------------------- |
-| Resume upload + validation                    | `POST /api/resume/upload`, `resume_service.py`                    |
-| PDF/DOCX parsing + section detection          | `parser_service.py`                                               |
-| Text chunking (overlapping windows)           | `chunker_service.py`                                              |
-| Local embeddings + ChromaDB storage           | `embedder_service.py`                                             |
-| ATS scoring via Groq                          | `POST /api/resume/analyze`, `llm_service.py`                      |
-| Matched/missing skills + score ring           | `ResumeUpload.tsx`                                                |
-| Resume history (accordion, nested analyses)   | `GET /api/resume/history`, `history_service.py`, `HistoryPage.tsx` |
-| Delete resume from history + ChromaDB cleanup | `DELETE /api/resume/history/{file_id}`, `delete_chunks()`         |
-| ATS summary saved + shown in history          | `summary` col in `resume_history`, `HistoryPage.tsx`              |
-| Context-aware upload card header              | `App.tsx` `HomePage` reads `parseResult`/`analyzeResult`          |
-| State reset on login/logout                   | `<ResumeProvider key={user?.id ?? 'logged-out'}>`                 |
-| GitHub OAuth (origin-aware HMAC state)        | `github_auth.py`                                                  |
-| JD URL fetch (direct HTTP + Jina fallback)    | `POST /api/resume/fetch-jd`, `jd_fetcher_service.py`             |
-| Role-specific interview questions             | `POST /api/interview/questions`, `interview_service.py`           |
-| Behavioral question bank (15 questions)       | `InterviewPage.tsx` (hardcoded)                                   |
-| AI feedback on answers                        | `POST /api/interview/feedback`, `interview_service.py`            |
-| All / One-by-one question views               | `InterviewPage.tsx`                                               |
-| Cross-page state persistence                  | `ResumeContext.tsx`                                               |
-| Nav + SVG logo + user avatar                  | `App.tsx`, `Logo.tsx`                                             |
-| ATS score guide section                       | `App.tsx`                                                         |
-| Auth gate (sign in / sign up / guest)         | `AuthGate.tsx`, route `/`                                         |
-| Supabase JWT auth — frontend                  | `AuthContext.tsx`, `lib/supabase.ts`                              |
-| Supabase JWT auth — backend                   | `core/auth.py`, `core/supabase.py`                                |
-| Profile page (account info + sign out)        | `ProfilePage.tsx`, route `/profile`                               |
+| Feature                                        | Where                                                                       |
+| ---------------------------------------------- | --------------------------------------------------------------------------- |
+| Resume upload + Supabase Storage               | `POST /api/resume/upload`, `resume_service.py`                              |
+| PDF/DOCX parsing via BytesIO (no disk writes)  | `parser_service.py`                                                         |
+| Text chunking (overlapping windows)            | `chunker_service.py`                                                        |
+| Local embeddings + ChromaDB storage            | `embedder_service.py`                                                       |
+| ATS scoring via Groq (skills + qualifications) | `POST /api/resume/analyze`, `llm_service.py`                                |
+| Qualification gaps warning (amber UI)          | `AnalyzeResponse.qualification_gaps`, `ResumeUpload.tsx`                    |
+| Semantic JD validation (gibberish detection)   | `llm_service.is_valid_job_description()`, used in /analyze + /questions     |
+| Matched/missing skills + score ring            | `ResumeUpload.tsx`                                                          |
+| Resume history (accordion, nested analyses)    | `GET /api/resume/history`, `history_service.py`, `HistoryPage.tsx`          |
+| Delete full resume from history                | `DELETE /api/resume/history/{file_id}`, `delete_chunks()`                   |
+| Delete individual ATS score from history       | `DELETE /api/resume/history/{file_id}/score?at=`, `delete_analysis_entry()` |
+| ATS summary saved + shown in history           | `summary` col in `resume_history`, `HistoryPage.tsx`                        |
+| Context-aware upload card header               | `App.tsx` `HomePage` reads `parseResult`/`analyzeResult`                    |
+| Logo click resets state (with confirm modal)   | `AppInner.handleLogoClick()`, `App.tsx`                                     |
+| State reset on login/logout                    | `<ResumeProvider key={user?.id ?? 'logged-out'}>`                           |
+| GitHub OAuth (origin-aware HMAC state)         | `github_auth.py`                                                            |
+| JD URL fetch (direct HTTP + Jina fallback)     | `POST /api/resume/fetch-jd`, `jd_fetcher_service.py`                        |
+| Role-specific interview questions              | `POST /api/interview/questions`, `interview_service.py`                     |
+| Behavioral question bank (15 questions)        | `InterviewPage.tsx` (hardcoded)                                             |
+| AI feedback on answers                         | `POST /api/interview/feedback`, `interview_service.py`                      |
+| Voice answer recording → Whisper transcription | `POST /api/interview/transcribe`, `VoiceMicButton` in `InterviewPage.tsx`   |
+| All / One-by-one question views                | `InterviewPage.tsx`                                                         |
+| Chatbot (SSE streaming, RAG context)           | `POST /api/chat/`, `chat_service.py`, `ChatBot.tsx`                         |
+| Cross-page state persistence                   | `ResumeContext.tsx`                                                         |
+| Nav + SVG logo + user avatar                   | `App.tsx`, `Logo.tsx`                                                       |
+| ATS score guide section                        | `App.tsx`                                                                   |
+| Auth gate (sign in / sign up / guest)          | `AuthGate.tsx`, route `/`                                                   |
+| Supabase JWT auth — frontend                   | `AuthContext.tsx`, `lib/supabase.ts`                                        |
+| Supabase JWT auth — backend                    | `core/auth.py`, `core/supabase.py`                                          |
+| Profile page (account info + sign out)         | `ProfilePage.tsx`, route `/profile`                                         |
 
 ## What's Next
 
-| Feature                       | Notes                                                   |
-| ----------------------------- | ------------------------------------------------------- |
-| Supabase Storage + PostgreSQL | Move files off local disk; tie uploads to user accounts |
-| MCP integrations              | LinkedIn JD fetch, deeper GitHub profile integration    |
-| Chatbot                       | Conversational AI assistant within the app              |
-| Voice recognition             | Speak interview answers (Web Speech API or Whisper)     |
+| Feature          | Notes                                                            |
+| ---------------- | ---------------------------------------------------------------- |
+| PostgreSQL       | Proper files table with user_id FK; move off resume_history rows |
+| MCP integrations | LinkedIn JD fetch, deeper GitHub profile integration             |

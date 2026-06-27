@@ -1,3 +1,4 @@
+import json
 import re
 from typing import Optional
 
@@ -30,12 +31,47 @@ _DIRECT_HEADERS = {
 }
 
 
+def _collect_strings(obj: object, results: list[str], min_len: int = 80) -> None:
+    if isinstance(obj, str):
+        cleaned = re.sub(r"<[^>]+>", " ", obj)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        if len(cleaned) >= min_len:
+            results.append(cleaned)
+    elif isinstance(obj, dict):
+        for v in obj.values():
+            _collect_strings(v, results, min_len)
+    elif isinstance(obj, list):
+        for item in obj:
+            _collect_strings(item, results, min_len)
+
+
+def _extract_next_data(soup: BeautifulSoup) -> str:
+    """Pull text from a Next.js __NEXT_DATA__ JSON blob before script tags are stripped."""
+    script = soup.find("script", id="__NEXT_DATA__")
+    if not script or not script.string:
+        return ""
+    try:
+        data = json.loads(script.string)
+    except (json.JSONDecodeError, ValueError):
+        return ""
+    texts: list[str] = []
+    _collect_strings(data, texts)
+    return " ".join(texts)
+
+
 def _extract_text(html: str) -> tuple[str, Optional[str]]:
     soup = BeautifulSoup(html, "html.parser")
 
     title: Optional[str] = None
     if soup.title and soup.title.string:
         title = soup.title.string.strip()[:200]
+
+    # Check for Next.js data blob before stripping script tags — many job boards
+    # (e.g. Amazon Jobs) embed the full job description inside __NEXT_DATA__ JSON
+    # rather than in the visible HTML, so stripping scripts first would lose it.
+    next_text = _extract_next_data(soup)
+    if len(next_text.split()) >= 40:
+        return re.sub(r"\s+", " ", next_text).strip(), title
 
     for tag in soup.select(", ".join(_NOISE_TAGS)):
         tag.decompose()
