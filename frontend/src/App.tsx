@@ -68,9 +68,13 @@ function Nav({ userInitial, onLogoClick }: { userInitial: string | null; onLogoC
       </div>
 
       <div className="nav-right">
-        {userInitial && (
+        {userInitial ? (
           <NavLink to="/profile" className="nav-avatar" aria-label="Your profile">
             {userInitial}
+          </NavLink>
+        ) : (
+          <NavLink to="/" className="nav-signin">
+            Sign in
           </NavLink>
         )}
       </div>

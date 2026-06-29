@@ -133,6 +133,22 @@
   opacity: 0.85;
 }
 
+.nav-signin {
+  padding: 5px 14px;
+  border-radius: 8px;
+  border: 1.5px solid #6366f1;
+  color: #6366f1;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 0.15s, color 0.15s;
+}
+
+.nav-signin:hover {
+  background: #6366f1;
+  color: #fff;
+}
+
 /* ── Auth loading splash ────────────────────────────────── */
 
 .auth-loading {
