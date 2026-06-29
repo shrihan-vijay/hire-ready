@@ -4,6 +4,33 @@ Full-stack AI resume copilot. Upload a resume, get an ATS score against a job de
 
 ---
 
+## Architecture Overview
+
+Three distinct layers:
+
+```
+Browser (React + TypeScript)
+          ↕  HTTP / SSE
+FastAPI Backend (Python)
+          ↕  API calls
+External Services (Groq, Supabase, ChromaDB)
+```
+
+**The core user flow:**
+1. Upload a resume → backend parses it, splits into chunks, embeds into ChromaDB (local vector DB)
+2. Paste a job description → backend compares resume chunks against JD via Groq LLM, returns ATS score + skill gaps
+3. Prep for the interview → backend generates tailored questions from resume + JD, gives coaching feedback
+4. Chat with the bot → floating chatbot that has your resume as context via ChromaDB RAG
+
+**Three external services do all the heavy lifting:**
+- **Groq** — runs LLMs (text generation) and Whisper (speech-to-text). Fast custom LPU hardware, cheap.
+- **Supabase** — two separate jobs: (1) auth (who you are via JWT), (2) storing resume files + analysis history
+- **ChromaDB** — a local vector database on the server's disk. Stores resume chunks as searchable vectors so the chatbot and interview prep can find relevant content fast without re-reading the whole document
+
+**The core architectural principle:** Each external dependency is isolated to exactly one service file. Swap ChromaDB for Pinecone → only `embedder_service.py` changes. Swap Groq for OpenAI → only `llm_service.py` and `interview_service.py` change. Swap Supabase Storage for S3 → only `resume_service.py` changes. Route handlers never know which provider is running.
+
+---
+
 ## Tech Stack
 
 | Layer         | Technology              | Purpose                                                       |
@@ -76,6 +103,63 @@ backend/app/core/
 ```
 
 **The key rule:** route handlers are thin — they receive the request, call a service, return the response. All logic lives in services. Swap S3 for local disk → change only `resume_service.py`. Swap Pinecone for ChromaDB → change only `embedder_service.py`. Swap OpenAI for Groq → change only `llm_service.py`.
+
+---
+
+## Frontend Architecture: Pages vs Components vs Context
+
+Think of it in terms of **scope**:
+
+### Pages — "what am I looking at right now?"
+A page is the full screen for a given URL. When you navigate to `/interview`, React renders `InterviewPage.tsx`. When you're at `/history`, it renders `HistoryPage.tsx`. Pages are route-level — one per URL, they own the layout of everything visible on that screen. Pages orchestrate smaller pieces but don't need to be reusable.
+
+### Components — "a reusable piece of UI"
+A component is a self-contained chunk of UI that doesn't care where it lives. `ChatBot.tsx` floats on every page — it's not tied to any one route. `ResumeUpload.tsx` is only mounted on the home route but is still a component because it's self-contained and doesn't own any routing logic.
+
+The distinction: **pages compose components**. A page says "put the upload widget here, put the score guide below it." The component just knows how to render itself.
+
+### Context — "state that needs to survive navigation"
+React normally loses state when you navigate away from a component. When React Router renders a new page, it unmounts the previous one — any `useState` inside it is gone. If you uploaded a resume on the home page and navigated to Interview Prep, your `file_id` would vanish.
+
+Context is a **global store that lives outside any individual page**. Both `AuthContext` and `ResumeContext` wrap the entire app in `App.tsx`, so their state persists across every navigation.
+
+```
+App.tsx (mounts AuthContext + ResumeContext)
+├── /          → ResumeUpload  ← reads/writes ResumeContext
+├── /interview → InterviewPage ← reads file_id + JD from ResumeContext
+├── /history   → HistoryPage
+└── /profile   → ProfilePage
+    ChatBot                    ← reads from both ResumeContext + AuthContext
+```
+
+`ResumeContext` is keyed on `user?.id ?? 'logged-out'` in `App.tsx`. When you log out and a different user logs in, React sees a new key and remounts the provider with fresh empty state — the next user can never see the previous user's resume data.
+
+---
+
+## Backend Architecture: Routes vs Services
+
+**The analogy:** Routes are waiters, services are kitchen stations.
+
+- **Routes (waiters)** take your order (the HTTP request), hand it to the kitchen, and bring back the food (the response). They don't cook anything.
+- **Services (kitchen stations)** each know how to do one thing well.
+
+A route handler looks like this:
+```python
+@router.post("/analyze")
+async def analyze_resume(request: AnalyzeRequest, user=Depends(get_current_user)):
+    result = await llm_service.analyze(request.file_id, request.job_description)
+    await history_service.save(user.id, result)
+    return result
+```
+
+It's just: receive → call service → return. No Groq calls, no SQL, no business logic.
+
+**FastAPI's dependency injection** powers `get_current_user`. Adding `user=Depends(get_current_user)` to a route makes FastAPI automatically run that function before the handler. If the JWT is invalid, it returns a 401 and your handler never runs. It's a clean way to enforce auth without repeating the check in every route.
+
+**Why this separation matters:**
+- You can test each service independently without running a full HTTP server
+- You can swap any provider (LLM, vector DB, file storage) by changing exactly one file
+- Routes stay readable — you can understand the API surface without knowing implementation details
 
 ---
 

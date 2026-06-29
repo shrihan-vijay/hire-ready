@@ -138,8 +138,10 @@
   border-radius: 8px;
   border: 1.5px solid #6366f1;
   color: #6366f1;
+  background: transparent;
   font-size: 13px;
   font-weight: 600;
+  cursor: pointer;
   text-decoration: none;
   transition: background 0.15s, color 0.15s;
 }

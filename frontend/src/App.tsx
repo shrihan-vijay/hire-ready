@@ -38,7 +38,7 @@ const NAV_TABS = [
   { to: '/history',   label: 'History',        icon: Clock },
 ]
 
-function Nav({ userInitial, onLogoClick }: { userInitial: string | null; onLogoClick?: () => void }) {
+function Nav({ userInitial, onLogoClick, onSignIn }: { userInitial: string | null; onLogoClick?: () => void; onSignIn?: () => void }) {
   return (
     <nav className="nav">
       <div
@@ -73,9 +73,9 @@ function Nav({ userInitial, onLogoClick }: { userInitial: string | null; onLogoC
             {userInitial}
           </NavLink>
         ) : (
-          <NavLink to="/" className="nav-signin">
+          <button className="nav-signin" onClick={onSignIn}>
             Sign in
-          </NavLink>
+          </button>
         )}
       </div>
     </nav>
@@ -177,13 +177,14 @@ function HomePage({ connected }: { connected: boolean | null }) {
 }
 
 function AppInner({
-  userInitial, connected, isAuthed, onAuthPage, handleGuest,
+  userInitial, connected, isAuthed, onAuthPage, handleGuest, handleSignIn,
 }: {
   userInitial: string | null
   connected: boolean | null
   isAuthed: boolean
   onAuthPage: boolean
   handleGuest: () => void
+  handleSignIn: () => void
 }) {
   const { parseResult, analyzeResult, clearAll } = useResume()
   const navigate = useNavigate()
@@ -205,7 +206,7 @@ function AppInner({
 
   return (
     <>
-      {!onAuthPage && <Nav userInitial={userInitial} onLogoClick={handleLogoClick} />}
+      {!onAuthPage && <Nav userInitial={userInitial} onLogoClick={handleLogoClick} onSignIn={handleSignIn} />}
 
       {showResetConfirm && (
         <div className="reset-overlay" role="dialog" aria-modal="true" aria-labelledby="reset-title">
@@ -273,6 +274,12 @@ function AppShell() {
     navigate('/home', { replace: true })
   }
 
+  function handleSignIn() {
+    sessionStorage.removeItem('guestMode')
+    setGuestMode(false)
+    navigate('/', { replace: true })
+  }
+
   const isAuthed = user !== null || guestMode
   const onAuthPage = location.pathname === '/'
   const userInitial = user?.email?.[0].toUpperCase() ?? null
@@ -301,6 +308,7 @@ function AppShell() {
           isAuthed={isAuthed}
           onAuthPage={onAuthPage}
           handleGuest={handleGuest}
+          handleSignIn={handleSignIn}
         />
       </ResumeProvider>
     </div>
