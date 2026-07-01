@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom'
 import axios from 'axios'
 import {
   AlertCircle,
+  Bot,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -13,10 +14,11 @@ import {
   MessageSquare,
   List,
   Square,
+  TrendingUp,
 } from 'lucide-react'
 import './InterviewPage.css'
 
-type Mode = 'behavioral' | 'role-specific'
+type Mode = 'mock' | 'question-bank'
 type ViewMode = 'all' | 'one-by-one'
 
 interface Question {
@@ -252,6 +254,349 @@ function CategoryBadge({ category }: { category: string }) {
   )
 }
 
+// ── Mock Interview ────────────────────────────────────────────────────────────
+
+type MockPhase = 'setup' | 'starting' | 'active' | 'thinking' | 'complete'
+
+interface MockQuestion {
+  text: string
+  category: string
+  hint: string
+}
+
+interface PerQuestionDebrief {
+  question: string
+  score: number
+  feedback: string
+}
+
+interface DebriefData {
+  overall_score: number
+  hire_recommendation: string
+  overall_assessment: string
+  strengths: string[]
+  improvements: string[]
+  per_question: PerQuestionDebrief[]
+}
+
+function scoreColor(score: number): { color: string; bg: string } {
+  if (score >= 80) return { color: '#15803d', bg: '#dcfce7' }
+  if (score >= 60) return { color: '#1d4ed8', bg: '#dbeafe' }
+  if (score >= 40) return { color: '#b45309', bg: '#fef3c7' }
+  return { color: '#dc2626', bg: '#fee2e2' }
+}
+
+function hireColor(rec: string): { color: string; bg: string } {
+  const map: Record<string, { color: string; bg: string }> = {
+    'Strong Yes': { color: '#15803d', bg: '#dcfce7' },
+    'Yes': { color: '#1d4ed8', bg: '#dbeafe' },
+    'Maybe': { color: '#b45309', bg: '#fef3c7' },
+    'No': { color: '#dc2626', bg: '#fee2e2' },
+  }
+  return map[rec] ?? { color: '#475569', bg: '#f1f5f9' }
+}
+
+function MockInterviewPanel({ fileId, initialJd }: { fileId?: string; initialJd: string }) {
+  const [phase, setPhase] = useState<MockPhase>('setup')
+  const [jd, setJd] = useState(initialJd)
+  const [error, setError] = useState('')
+
+  const [sessionId, setSessionId] = useState('')
+  const [currentQuestion, setCurrentQuestion] = useState<MockQuestion | null>(null)
+  const [questionNumber, setQuestionNumber] = useState(0)
+  const [totalQuestions, setTotalQuestions] = useState(0)
+  const [isFollowup, setIsFollowup] = useState(false)
+  const [prevQuestion, setPrevQuestion] = useState('')
+  const [prevAnswer, setPrevAnswer] = useState('')
+  const [answer, setAnswer] = useState('')
+
+  const [debrief, setDebrief] = useState<DebriefData | null>(null)
+  const [expandedDebriefQ, setExpandedDebriefQ] = useState<number | null>(null)
+
+  async function startInterview() {
+    if (!jd.trim()) return
+    setPhase('starting')
+    setError('')
+    try {
+      const res = await axios.post<{
+        session_id: string
+        question: MockQuestion
+        question_number: number
+        total_questions: number
+      }>(`${apiBaseUrl}/api/mock-interview/start`, { job_description: jd, file_id: fileId ?? null })
+      setSessionId(res.data.session_id)
+      setCurrentQuestion(res.data.question)
+      setQuestionNumber(res.data.question_number)
+      setTotalQuestions(res.data.total_questions)
+      setIsFollowup(false)
+      setAnswer('')
+      setPhase('active')
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setError(detail ?? 'Failed to start interview. Try again.')
+      setPhase('setup')
+    }
+  }
+
+  async function submitAnswer() {
+    if (!answer.trim() || !currentQuestion) return
+    const submitted = answer
+    setPhase('thinking')
+    try {
+      const res = await axios.post<
+        | { type: 'followup'; followup: string }
+        | { type: 'next_question'; question: MockQuestion; question_number: number; total_questions: number }
+        | { type: 'debrief'; debrief: DebriefData }
+      >(`${apiBaseUrl}/api/mock-interview/answer`, { session_id: sessionId, answer: submitted })
+
+      const data = res.data
+      setAnswer('')
+
+      if (data.type === 'followup') {
+        setPrevQuestion(isFollowup ? prevQuestion : currentQuestion.text)
+        setPrevAnswer(submitted)
+        setCurrentQuestion({ text: data.followup, category: currentQuestion.category, hint: '' })
+        setIsFollowup(true)
+        setPhase('active')
+      } else if (data.type === 'next_question') {
+        setCurrentQuestion(data.question)
+        setQuestionNumber(data.question_number)
+        setIsFollowup(false)
+        setPrevQuestion('')
+        setPrevAnswer('')
+        setPhase('active')
+      } else if (data.type === 'debrief') {
+        setDebrief(data.debrief)
+        setPhase('complete')
+      }
+    } catch {
+      setAnswer(submitted)
+      setError('Something went wrong. Try again.')
+      setPhase('active')
+    }
+  }
+
+  function reset() {
+    setPhase('setup')
+    setSessionId('')
+    setCurrentQuestion(null)
+    setIsFollowup(false)
+    setPrevQuestion('')
+    setPrevAnswer('')
+    setAnswer('')
+    setDebrief(null)
+    setError('')
+    setExpandedDebriefQ(null)
+  }
+
+  if (phase === 'setup') {
+    return (
+      <div className="ip-jd-setup">
+        {initialJd ? (
+          <>
+            <div className="ip-mock-jd-loaded">
+              <span className="ip-mock-jd-loaded-check">✓</span>
+              <div>
+                <p className="ip-mock-jd-loaded-title">
+                  {fileId ? 'Resume + job description loaded from ATS analysis' : 'Job description loaded from ATS analysis'}
+                </p>
+                <p className="ip-mock-jd-loaded-sub">Questions will be tailored to this role{fileId ? ' and your resume' : ''}.</p>
+              </div>
+            </div>
+            {error && (
+              <div className="ip-error">
+                <AlertCircle size={14} />
+                {error}
+              </div>
+            )}
+            <button className="ip-generate-btn" onClick={startInterview}>
+              <Bot size={15} /> Begin Mock Interview
+            </button>
+          </>
+        ) : (
+          <>
+            <p className="ip-jd-label">Paste a job description to begin your mock interview.</p>
+            <textarea
+              className="ip-jd-textarea"
+              placeholder="Paste the full job description here…"
+              rows={8}
+              value={jd}
+              onChange={(e) => setJd(e.target.value)}
+            />
+            {error && (
+              <div className="ip-error">
+                <AlertCircle size={14} />
+                {error}
+              </div>
+            )}
+            <button className="ip-generate-btn" disabled={!jd.trim()} onClick={startInterview}>
+              <Bot size={15} /> Begin Mock Interview
+            </button>
+          </>
+        )}
+      </div>
+    )
+  }
+
+  if (phase === 'starting') {
+    return (
+      <div className="ip-generating">
+        <Loader2 size={28} className="spin ip-generating-icon" />
+        <p>Preparing your interview questions…</p>
+      </div>
+    )
+  }
+
+  if (phase === 'thinking') {
+    return (
+      <div className="ip-generating">
+        <Loader2 size={28} className="spin ip-generating-icon" />
+        <p>Evaluating your answer…</p>
+      </div>
+    )
+  }
+
+  if (phase === 'active' && currentQuestion) {
+    const progressPct = ((questionNumber - 1) / totalQuestions) * 100
+    return (
+      <div className="ip-mock-active">
+        {error && (
+          <div className="ip-error" style={{ marginBottom: 8 }}>
+            <AlertCircle size={14} />
+            {error}
+          </div>
+        )}
+
+        <div className="ip-mock-progress">
+          <span className="ip-mock-progress-label">
+            Question {questionNumber} of {totalQuestions}
+          </span>
+          <div className="ip-mock-progress-track">
+            <div className="ip-mock-progress-fill" style={{ width: `${progressPct}%` }} />
+          </div>
+        </div>
+
+        {isFollowup && (
+          <div className="ip-mock-prev-qa">
+            <p className="ip-mock-prev-q">{prevQuestion}</p>
+            <p className="ip-mock-prev-a">"{prevAnswer}"</p>
+          </div>
+        )}
+
+        <div className="ip-obo-card">
+          {isFollowup ? (
+            <span className="ip-mock-followup-badge">Follow-up</span>
+          ) : (
+            <CategoryBadge category={currentQuestion.category} />
+          )}
+          <p className="ip-obo-question">{currentQuestion.text}</p>
+          {currentQuestion.hint && <p className="ip-hint">💡 {currentQuestion.hint}</p>}
+
+          <textarea
+            className="ip-textarea"
+            placeholder="Type your answer here…"
+            rows={6}
+            value={answer}
+            onChange={(e) => setAnswer(e.target.value)}
+            autoFocus
+          />
+
+          <div className="ip-actions-row">
+            <VoiceMicButton
+              onTranscript={(text) => setAnswer((prev) => (prev ? prev + ' ' : '') + text)}
+            />
+            <button
+              className="ip-feedback-btn"
+              disabled={!answer.trim()}
+              onClick={submitAnswer}
+            >
+              <TrendingUp size={15} /> Submit Answer
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (phase === 'complete' && debrief) {
+    const sc = scoreColor(debrief.overall_score)
+    const hc = hireColor(debrief.hire_recommendation)
+    return (
+      <div className="ip-mock-debrief">
+        <div className="ip-mock-debrief-header">
+          <div className="ip-mock-score-block" style={{ background: sc.bg }}>
+            <span className="ip-mock-score-num" style={{ color: sc.color }}>
+              {debrief.overall_score}
+            </span>
+            <span className="ip-mock-score-denom" style={{ color: sc.color }}>/100</span>
+          </div>
+          <div className="ip-mock-debrief-summary">
+            <span className="ip-mock-hire-badge" style={{ background: hc.bg, color: hc.color }}>
+              {debrief.hire_recommendation}
+            </span>
+            <p className="ip-mock-assessment">{debrief.overall_assessment}</p>
+          </div>
+        </div>
+
+        <div className="ip-mock-section">
+          <p className="ip-mock-section-label">Strengths</p>
+          <div className="ip-mock-chips">
+            {debrief.strengths.map((s, i) => (
+              <span key={i} className="ip-mock-chip ip-mock-chip--green">{s}</span>
+            ))}
+          </div>
+        </div>
+
+        <div className="ip-mock-section">
+          <p className="ip-mock-section-label">Areas to Improve</p>
+          <div className="ip-mock-chips">
+            {debrief.improvements.map((imp, i) => (
+              <span key={i} className="ip-mock-chip ip-mock-chip--amber">{imp}</span>
+            ))}
+          </div>
+        </div>
+
+        <div className="ip-mock-section">
+          <p className="ip-mock-section-label">Question Breakdown</p>
+          <div className="ip-questions">
+            {debrief.per_question.map((pq, i) => {
+              const qsc = scoreColor(pq.score)
+              const open = expandedDebriefQ === i
+              return (
+                <div key={i} className={`ip-card ${open ? 'ip-card--open' : ''}`}>
+                  <button className="ip-card-header" onClick={() => setExpandedDebriefQ(open ? null : i)}>
+                    <div className="ip-card-header-left">
+                      <span
+                        className="ip-mock-q-score"
+                        style={{ background: qsc.bg, color: qsc.color }}
+                      >
+                        {pq.score}
+                      </span>
+                      <span className="ip-card-question">{pq.question}</span>
+                    </div>
+                    <ChevronDown size={17} className={`ip-chevron ${open ? 'ip-chevron--open' : ''}`} />
+                  </button>
+                  {open && (
+                    <div className="ip-card-body">
+                      <p className="ip-feedback-text">{pq.feedback}</p>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+
+        <button className="ip-regenerate ip-mock-retry" onClick={reset}>
+          Try Again
+        </button>
+      </div>
+    )
+  }
+
+  return null
+}
+
 function QuestionCard({
   q,
   state,
@@ -335,8 +680,10 @@ export function InterviewPage() {
   const location = useLocation()
   const incoming = location.state as { file_id?: string; job_description?: string } | null
 
-  const [mode, setMode] = useState<Mode>(incoming?.job_description ? 'role-specific' : 'behavioral')
-  const [viewMode, setViewMode] = useState<ViewMode>('all')
+  const [mode, setMode] = useState<Mode>('mock')
+  const [qbTab, setQbTab] = useState<'behavioral' | 'role-specific'>('behavioral')
+  const [behavioralViewMode, setBehavioralViewMode] = useState<ViewMode>('one-by-one')
+  const [roleViewMode, setRoleViewMode] = useState<ViewMode>('one-by-one')
   const [group, setGroup] = useState('All')
 
   // Behavioral state
@@ -352,13 +699,16 @@ export function InterviewPage() {
   const [generating, setGenerating] = useState(false)
   const [generateError, setGenerateError] = useState('')
 
-  // Auto-generate if we arrived from the analyze flow
+  // When switching to Question Bank with a pre-loaded JD, go straight to role-specific and generate
   useEffect(() => {
-    if (incoming?.job_description && mode === 'role-specific') {
-      void fetchRoleQuestions()
+    if (mode === 'question-bank' && jd.trim()) {
+      setQbTab('role-specific')
+      if (roleQuestions.length === 0 && !generating) {
+        void fetchRoleQuestions()
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [mode])
 
   async function fetchRoleQuestions() {
     if (!jd.trim()) return
@@ -427,161 +777,200 @@ export function InterviewPage() {
         </div>
       </div>
 
-      {/* Mode switcher */}
-      <div className="ip-mode-switcher">
-        <button
-          className={`ip-mode-btn ${mode === 'behavioral' ? 'ip-mode-btn--active' : ''}`}
-          onClick={() => setMode('behavioral')}
-        >
-          Behavioral Practice
-        </button>
-        <button
-          className={`ip-mode-btn ${mode === 'role-specific' ? 'ip-mode-btn--active' : ''}`}
-          onClick={() => setMode('role-specific')}
-        >
-          <Sparkles size={14} />
-          Role-Specific
-        </button>
+      {/* Mode switcher + description */}
+      <div className="ip-nav">
+        <div className="ip-mode-switcher">
+          <button
+            className={`ip-mode-btn ${mode === 'mock' ? 'ip-mode-btn--active' : ''}`}
+            onClick={() => setMode('mock')}
+          >
+            <Bot size={14} />
+            Mock Interview
+          </button>
+          <button
+            className={`ip-mode-btn ${mode === 'question-bank' ? 'ip-mode-btn--active' : ''}`}
+            onClick={() => setMode('question-bank')}
+          >
+            <Sparkles size={14} />
+            Question Bank
+          </button>
+        </div>
+        <p className="ip-mode-desc">
+          {mode === 'mock'
+            ? 'The AI conducts a live interview, asks follow-up questions based on your answers, and scores your performance at the end.'
+            : 'Browse questions and practice at your own pace. Get AI feedback on any answer, no pressure.'}
+        </p>
       </div>
 
-      {/* ── Behavioral mode ── */}
-      {mode === 'behavioral' && (
+      {/* ── Mock Interview ── */}
+      {mode === 'mock' && (
         <div className="ip-content">
-          <div className="ip-toolbar">
-            <div className="ip-group-pills">
-              {GROUPS.map((g) => (
-                <button
-                  key={g}
-                  className={`ip-group-pill ${group === g ? 'ip-group-pill--active' : ''}`}
-                  onClick={() => setGroup(g)}
-                >
-                  {g}
-                </button>
-              ))}
-            </div>
-            <ViewToggle view={viewMode} onChange={setViewMode} />
-          </div>
-
-          {viewMode === 'all' ? (
-            <div className="ip-questions">
-              {filteredBehavioral.map((q) => (
-                <QuestionCard
-                  key={q.id}
-                  q={q}
-                  state={behavioralStates[q.id]}
-                  onChange={(answer) =>
-                    setBehavioralStates((prev) => ({ ...prev, [q.id]: { ...prev[q.id], answer } }))
-                  }
-                  onToggle={() =>
-                    setBehavioralStates((prev) => ({
-                      ...prev,
-                      [q.id]: { ...prev[q.id], expanded: !prev[q.id].expanded },
-                    }))
-                  }
-                  onFeedback={() => fetchFeedback(q, behavioralStates, setBehavioralStates)}
-                />
-              ))}
-            </div>
-          ) : (
-            <OneByOneCard
-              questions={filteredBehavioral}
-              states={behavioralStates}
-              onChangeAnswer={(id, answer) =>
-                setBehavioralStates((prev) => ({ ...prev, [id]: { ...prev[id], answer } }))
-              }
-              onFeedback={(q) => fetchFeedback(q, behavioralStates, setBehavioralStates)}
-            />
-          )}
+          <MockInterviewPanel fileId={fileId} initialJd={jd} />
         </div>
       )}
 
-      {/* ── Role-specific mode ── */}
-      {mode === 'role-specific' && (
+      {/* ── Question Bank ── */}
+      {mode === 'question-bank' && (
         <div className="ip-content">
-          {roleQuestions.length === 0 && !generating && (
-            <div className="ip-jd-setup">
-              <p className="ip-jd-label">
-                {fileId
-                  ? 'Your resume is loaded. Paste the job description to generate tailored questions.'
-                  : 'Paste a job description to generate tailored interview questions.'}
-              </p>
-              <textarea
-                className="ip-jd-textarea"
-                placeholder="Paste the full job description here…"
-                rows={8}
-                value={jd}
-                onChange={(e) => setJd(e.target.value)}
-              />
-              {generateError && (
-                <div className="ip-error">
-                  <AlertCircle size={14} />
-                  {generateError}
-                </div>
-              )}
-              <button
-                className="ip-generate-btn"
-                disabled={!jd.trim()}
-                onClick={fetchRoleQuestions}
-              >
-                <Sparkles size={15} />
-                Generate Questions
-              </button>
-            </div>
-          )}
 
-          {generating && (
-            <div className="ip-generating">
-              <Loader2 size={28} className="spin ip-generating-icon" />
-              <p>Generating questions tailored to this role…</p>
-            </div>
-          )}
+          {/* Sub-tabs */}
+          <div className="ip-qb-tabs">
+            <button
+              className={`ip-qb-tab ${qbTab === 'behavioral' ? 'ip-qb-tab--active' : ''}`}
+              onClick={() => setQbTab('behavioral')}
+            >
+              Behavioral
+            </button>
+            <button
+              className={`ip-qb-tab ${qbTab === 'role-specific' ? 'ip-qb-tab--active' : ''}`}
+              onClick={() => setQbTab('role-specific')}
+            >
+              Role-Specific
+            </button>
+          </div>
 
-          {roleQuestions.length > 0 && (
+          {/* Behavioral sub-tab */}
+          {qbTab === 'behavioral' && (
             <>
-              <div className="ip-role-header">
-                <p className="ip-role-count">{roleQuestions.length} questions generated</p>
-                <div className="ip-role-header-right">
-                  <ViewToggle view={viewMode} onChange={setViewMode} />
-                  <button className="ip-regenerate" onClick={() => { setRoleQuestions([]); setRoleStates({}) }}>
-                    Change JD
-                  </button>
+              <div className="ip-toolbar">
+                <div className="ip-group-pills">
+                  {GROUPS.map((g) => (
+                    <button
+                      key={g}
+                      className={`ip-group-pill ${group === g ? 'ip-group-pill--active' : ''}`}
+                      onClick={() => setGroup(g)}
+                    >
+                      {g}
+                    </button>
+                  ))}
                 </div>
+                <ViewToggle view={behavioralViewMode} onChange={setBehavioralViewMode} />
               </div>
-
-              {viewMode === 'all' ? (
+              {behavioralViewMode === 'all' ? (
                 <div className="ip-questions">
-                  {roleQuestions.map((q) => (
+                  {filteredBehavioral.map((q) => (
                     <QuestionCard
                       key={q.id}
                       q={q}
-                      state={roleStates[q.id]}
-                      fileId={fileId}
+                      state={behavioralStates[q.id]}
                       onChange={(answer) =>
-                        setRoleStates((prev) => ({ ...prev, [q.id]: { ...prev[q.id], answer } }))
+                        setBehavioralStates((prev) => ({ ...prev, [q.id]: { ...prev[q.id], answer } }))
                       }
                       onToggle={() =>
-                        setRoleStates((prev) => ({
+                        setBehavioralStates((prev) => ({
                           ...prev,
                           [q.id]: { ...prev[q.id], expanded: !prev[q.id].expanded },
                         }))
                       }
-                      onFeedback={() => fetchFeedback(q, roleStates, setRoleStates, fileId)}
+                      onFeedback={() => fetchFeedback(q, behavioralStates, setBehavioralStates)}
                     />
                   ))}
                 </div>
               ) : (
                 <OneByOneCard
-                  questions={roleQuestions}
-                  states={roleStates}
-                  fileId={fileId}
+                  questions={filteredBehavioral}
+                  states={behavioralStates}
                   onChangeAnswer={(id, answer) =>
-                    setRoleStates((prev) => ({ ...prev, [id]: { ...prev[id], answer } }))
+                    setBehavioralStates((prev) => ({ ...prev, [id]: { ...prev[id], answer } }))
                   }
-                  onFeedback={(q) => fetchFeedback(q, roleStates, setRoleStates, fileId)}
+                  onFeedback={(q) => fetchFeedback(q, behavioralStates, setBehavioralStates)}
                 />
               )}
             </>
           )}
+
+          {/* Role-specific sub-tab */}
+          {qbTab === 'role-specific' && (
+            <>
+              {roleQuestions.length === 0 && !generating && (
+                <div className="ip-jd-setup">
+                  <p className="ip-jd-label">
+                    {fileId
+                      ? 'Your resume is loaded. Paste the job description to generate tailored questions.'
+                      : 'Paste a job description to generate tailored interview questions.'}
+                  </p>
+                  <textarea
+                    className="ip-jd-textarea"
+                    placeholder="Paste the full job description here…"
+                    rows={6}
+                    value={jd}
+                    onChange={(e) => setJd(e.target.value)}
+                  />
+                  {generateError && (
+                    <div className="ip-error">
+                      <AlertCircle size={14} />
+                      {generateError}
+                    </div>
+                  )}
+                  <button
+                    className="ip-generate-btn"
+                    disabled={!jd.trim()}
+                    onClick={fetchRoleQuestions}
+                  >
+                    <Sparkles size={15} />
+                    Generate Questions
+                  </button>
+                </div>
+              )}
+
+              {generating && (
+                <div className="ip-generating">
+                  <Loader2 size={28} className="spin ip-generating-icon" />
+                  <p>Generating role-specific questions…</p>
+                </div>
+              )}
+
+              {roleQuestions.length > 0 && (
+                <>
+                  <div className="ip-role-header">
+                    <p className="ip-role-count">{roleQuestions.length} questions generated</p>
+                    <div className="ip-role-header-right">
+                      <ViewToggle view={roleViewMode} onChange={setRoleViewMode} />
+                      <button
+                        className="ip-regenerate"
+                        onClick={() => { setRoleQuestions([]); setRoleStates({}); setJd('') }}
+                      >
+                        Change JD
+                      </button>
+                    </div>
+                  </div>
+                  {roleViewMode === 'all' ? (
+                    <div className="ip-questions">
+                      {roleQuestions.map((q) => (
+                        <QuestionCard
+                          key={q.id}
+                          q={q}
+                          state={roleStates[q.id]}
+                          fileId={fileId}
+                          onChange={(answer) =>
+                            setRoleStates((prev) => ({ ...prev, [q.id]: { ...prev[q.id], answer } }))
+                          }
+                          onToggle={() =>
+                            setRoleStates((prev) => ({
+                              ...prev,
+                              [q.id]: { ...prev[q.id], expanded: !prev[q.id].expanded },
+                            }))
+                          }
+                          onFeedback={() => fetchFeedback(q, roleStates, setRoleStates, fileId)}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <OneByOneCard
+                      questions={roleQuestions}
+                      states={roleStates}
+                      fileId={fileId}
+                      onChangeAnswer={(id, answer) =>
+                        setRoleStates((prev) => ({ ...prev, [id]: { ...prev[id], answer } }))
+                      }
+                      onFeedback={(q) => fetchFeedback(q, roleStates, setRoleStates, fileId)}
+                    />
+                  )}
+                </>
+              )}
+            </>
+          )}
+
         </div>
       )}
     </div>

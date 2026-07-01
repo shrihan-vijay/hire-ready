@@ -43,6 +43,23 @@
   color: #6b7280;
 }
 
+/* ── Nav (mode switcher + description) ── */
+
+.ip-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 28px;
+}
+
+.ip-mode-desc {
+  margin: 0;
+  font-size: 13px;
+  color: #6b7280;
+  line-height: 1.55;
+  max-width: 520px;
+}
+
 /* ── Mode switcher ── */
 
 .ip-mode-switcher {
@@ -51,7 +68,6 @@
   border-radius: 12px;
   padding: 4px;
   gap: 4px;
-  margin-bottom: 28px;
 }
 
 .ip-mode-btn {
@@ -651,6 +667,299 @@
   font-size: 13px;
 }
 
+/* ── Mock Interview ── */
+
+/* ── Question Bank sub-tabs ── */
+
+.ip-qb-tabs {
+  display: inline-flex;
+  background: #f1f5f9;
+  border-radius: 10px;
+  padding: 3px;
+  gap: 3px;
+}
+
+.ip-qb-tab {
+  padding: 6px 16px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #64748b;
+  cursor: pointer;
+  transition: background 0.13s, color 0.13s;
+}
+
+.ip-qb-tab--active {
+  background: #fff;
+  color: #6366f1;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+
+.ip-qb-tab:not(.ip-qb-tab--active):hover {
+  color: #374151;
+}
+
+/* ── Question Bank sections ── */
+
+.ip-qb-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ip-qb-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ip-qb-section-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #6366f1;
+}
+
+.ip-qb-divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, #e5e7eb 20%, #e5e7eb 80%, transparent);
+  margin: 8px 0;
+}
+
+.ip-mock-jd-loaded {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  background: #f0fdf4;
+  border: 1.5px solid #bbf7d0;
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+.ip-mock-jd-loaded-check {
+  font-size: 16px;
+  color: #16a34a;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.ip-mock-jd-loaded-title {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #15803d;
+}
+
+.ip-mock-jd-loaded-sub {
+  margin: 3px 0 0;
+  font-size: 12.5px;
+  color: #4ade80;
+  color: #166534;
+}
+
+.ip-mock-active {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.ip-mock-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ip-mock-progress-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.ip-mock-progress-track {
+  height: 4px;
+  background: #e5e7eb;
+  border-radius: 99px;
+  overflow: hidden;
+}
+
+.ip-mock-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #6366f1, #8b5cf6);
+  border-radius: 99px;
+  transition: width 0.4s ease;
+}
+
+.ip-mock-prev-qa {
+  background: #f8fafc;
+  border: 1.5px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ip-mock-prev-q {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #6b7280;
+}
+
+.ip-mock-prev-a {
+  margin: 0;
+  font-size: 13px;
+  color: #374151;
+  font-style: italic;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.ip-mock-followup-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: #fef3c7;
+  color: #b45309;
+}
+
+/* Debrief */
+
+.ip-mock-debrief {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.ip-mock-debrief-header {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  background: rgba(255,255,255,0.9);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1.5px solid rgba(0,0,0,0.08);
+  border-radius: 16px;
+  padding: 24px;
+}
+
+.ip-mock-score-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 80px;
+  height: 80px;
+  border-radius: 20px;
+  flex-shrink: 0;
+}
+
+.ip-mock-score-num {
+  font-size: 32px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.ip-mock-score-denom {
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.7;
+}
+
+.ip-mock-debrief-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.ip-mock-hire-badge {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 99px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  align-self: flex-start;
+}
+
+.ip-mock-assessment {
+  margin: 0;
+  font-size: 13.5px;
+  color: #374151;
+  line-height: 1.6;
+}
+
+.ip-mock-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ip-mock-section-label {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #6366f1;
+}
+
+.ip-mock-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ip-mock-chip {
+  padding: 5px 12px;
+  border-radius: 99px;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.ip-mock-chip--green {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.ip-mock-chip--amber {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.ip-mock-q-score {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.ip-mock-retry {
+  align-self: flex-start;
+  padding: 8px 18px;
+  font-size: 13px;
+}
+
 @media (max-width: 600px) {
   .ip-page {
     padding: 40px 20px 80px;
@@ -663,5 +972,19 @@
   .ip-mode-btn {
     flex: 1;
     justify-content: center;
+  }
+
+  .ip-qb-tabs {
+    width: 100%;
+  }
+
+  .ip-qb-tab {
+    flex: 1;
+    text-align: center;
+  }
+
+  .ip-mock-debrief-header {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }

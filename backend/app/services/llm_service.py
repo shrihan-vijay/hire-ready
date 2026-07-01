@@ -85,13 +85,17 @@ Respond with a JSON object in this exact format (no markdown, no code blocks, ju
 
 
 def is_valid_job_description(text: str) -> bool:
+    # Sample beginning + middle so we see actual JD content even if the page
+    # leads with application form boilerplate (which can fool a short prefix check)
+    sample = text[:2000] + ("\n\n...\n\n" + text[len(text)//2: len(text)//2 + 1000] if len(text) > 3000 else "")
     response = _get_client().chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[{
             "role": "user",
             "content": (
-                "Does the following text appear to be a real job description or job posting? "
-                "Reply with only 'yes' or 'no'.\n\n" + text[:800]
+                "Does the following text contain a real job description or job posting "
+                "(with responsibilities, requirements, or role details)? "
+                "Reply with only 'yes' or 'no'.\n\n" + sample
             ),
         }],
         temperature=0,

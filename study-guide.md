@@ -17,12 +17,14 @@ External Services (Groq, Supabase, ChromaDB)
 ```
 
 **The core user flow:**
+
 1. Upload a resume → backend parses it, splits into chunks, embeds into ChromaDB (local vector DB)
 2. Paste a job description → backend compares resume chunks against JD via Groq LLM, returns ATS score + skill gaps
 3. Prep for the interview → backend generates tailored questions from resume + JD, gives coaching feedback
 4. Chat with the bot → floating chatbot that has your resume as context via ChromaDB RAG
 
 **Three external services do all the heavy lifting:**
+
 - **Groq** — runs LLMs (text generation) and Whisper (speech-to-text). Fast custom LPU hardware, cheap.
 - **Supabase** — two separate jobs: (1) auth (who you are via JWT), (2) storing resume files + analysis history
 - **ChromaDB** — a local vector database on the server's disk. Stores resume chunks as searchable vectors so the chatbot and interview prep can find relevant content fast without re-reading the whole document
@@ -111,17 +113,60 @@ backend/app/core/
 Think of it in terms of **scope**:
 
 ### Pages — "what am I looking at right now?"
-A page is the full screen for a given URL. When you navigate to `/interview`, React renders `InterviewPage.tsx`. When you're at `/history`, it renders `HistoryPage.tsx`. Pages are route-level — one per URL, they own the layout of everything visible on that screen. Pages orchestrate smaller pieces but don't need to be reusable.
+
+A page is the full screen for a given URL. When you navigate to `/interview`, React renders `InterviewPage.tsx`. When you're at `/history`, it renders `HistoryPage.tsx`. Pages are **associated with a URL** — one per route. They own the layout of everything visible on that screen and orchestrate smaller pieces.
+
+**Important: pages do not own routing logic.** They are passive — they don't know what URL they're at and don't control navigation. All routing logic lives in `App.tsx`:
+
+```tsx
+<Routes>
+  <Route path="/home" element={<HomePage />} />
+  <Route path="/interview" element={<InterviewPage />} />
+  <Route path="/history" element={<HistoryPage />} />
+</Routes>
+```
+
+`App.tsx` says "when the URL is `/interview`, render `InterviewPage`." `InterviewPage` has no idea it's associated with `/interview` — it's just a component React Router happens to mount there.
 
 ### Components — "a reusable piece of UI"
+
 A component is a self-contained chunk of UI that doesn't care where it lives. `ChatBot.tsx` floats on every page — it's not tied to any one route. `ResumeUpload.tsx` is only mounted on the home route but is still a component because it's self-contained and doesn't own any routing logic.
 
 The distinction: **pages compose components**. A page says "put the upload widget here, put the score guide below it." The component just knows how to render itself.
 
+### What "mounting" and "unmounting" mean
+
+**Mounting** = React creates the component and puts it on screen. Think of it like opening an app on your phone — it starts up, allocates memory, displays itself.
+
+**Unmounting** = React removes the component from the screen and destroys it entirely. Like closing that app — it's gone from memory.
+
+Any `useState` variable lives **inside** the component. The moment the component unmounts, those variables are destroyed. This is why navigation loses state:
+
+```
+User is on /home → fileId = "abc-123" (lives inside HomePage)
+User navigates to /interview
+  → React unmounts HomePage   ← fileId destroyed
+  → React mounts InterviewPage ← starts fresh, knows nothing
+```
+
 ### Context — "state that needs to survive navigation"
-React normally loses state when you navigate away from a component. When React Router renders a new page, it unmounts the previous one — any `useState` inside it is gone. If you uploaded a resume on the home page and navigated to Interview Prep, your `file_id` would vanish.
 
 Context is a **global store that lives outside any individual page**. Both `AuthContext` and `ResumeContext` wrap the entire app in `App.tsx`, so their state persists across every navigation.
+
+```tsx
+<ResumeContext>
+  {" "}
+  ← never unmounts, always alive
+  <Routes>
+    <Route path="/home" element={<HomePage />} />
+    <Route path="/interview" element={<InterviewPage />} />
+  </Routes>
+</ResumeContext>
+```
+
+Pages come and go. The context wrapping them never does. `file_id` stored in context survives navigation — it's not inside any page, it's above all of them.
+
+The analogy: writing a note on a sticky note inside a book (gone when you close the book) vs writing it on the wall above the bookshelf (always there no matter which book you open).
 
 ```
 App.tsx (mounts AuthContext + ResumeContext)
@@ -144,6 +189,7 @@ App.tsx (mounts AuthContext + ResumeContext)
 - **Services (kitchen stations)** each know how to do one thing well.
 
 A route handler looks like this:
+
 ```python
 @router.post("/analyze")
 async def analyze_resume(request: AnalyzeRequest, user=Depends(get_current_user)):
@@ -157,9 +203,232 @@ It's just: receive → call service → return. No Groq calls, no SQL, no busine
 **FastAPI's dependency injection** powers `get_current_user`. Adding `user=Depends(get_current_user)` to a route makes FastAPI automatically run that function before the handler. If the JWT is invalid, it returns a 401 and your handler never runs. It's a clean way to enforce auth without repeating the check in every route.
 
 **Why this separation matters:**
+
 - You can test each service independently without running a full HTTP server
 - You can swap any provider (LLM, vector DB, file storage) by changing exactly one file
 - Routes stay readable — you can understand the API surface without knowing implementation details
+
+---
+
+## Pydantic Models
+
+Pydantic is a Python library that lets you define the **shape of data** as a class and automatically validates that incoming data matches that shape before your code ever runs.
+
+Without Pydantic you'd write validation manually:
+
+```python
+if "file_id" not in request:
+    raise ValueError("missing file_id")
+if not isinstance(request["job_description"], str):
+    raise ValueError("wrong type")
+```
+
+With Pydantic you just define:
+
+```python
+class AnalyzeRequest(BaseModel):
+    file_id: str
+    job_description: str
+```
+
+FastAPI reads the type hint on the route handler (`body: AnalyzeRequest`), automatically parses the incoming JSON into that model, and rejects malformed requests with a 422 before your function runs. You write zero parsing or validation code.
+
+### The three model files
+
+**`models/resume.py`** — shapes for the upload/analyze/history feature:
+
+- What an `/upload` response looks like (`{ file_id, filename, word_count, sections }`)
+- What an `/analyze` request needs (`{ file_id, job_description }`)
+- What an `/analyze` response looks like (`{ score, matched_skills, missing_skills, qualification_gaps, summary }`)
+- What a history entry looks like (`AnalysisEntry`, `ResumeFile`)
+
+**`models/interview.py`** — shapes for interview prep:
+
+- What `/questions` needs (`{ file_id?, job_description }`)
+- What `/feedback` needs (`{ question, user_answer, file_id? }`)
+- What a question looks like in the response (`{ question, category, hint }`)
+
+**`models/chat.py`** — shapes for the chatbot:
+
+- `ChatMessage` — one message (`{ role: "user"|"assistant", content: str }`)
+- `ChatRequest` — what `/chat` receives (`{ messages: ChatMessage[], file_id?, job_description? }`)
+
+They're separated by feature area so that adding a field to the analyze response only touches `models/resume.py` — no other model file is affected.
+
+---
+
+## The `/analyze` Endpoint — Line by Line
+
+This is the most important endpoint in the app. Here's every part:
+
+### The decorator
+
+```python
+@router.post("/analyze", response_model=AnalyzeResponse)
+```
+
+Registers this function as the handler for `POST /api/resume/analyze`. `router` is mounted in `routes.py` under `/api/resume`, so the full URL is `/api/resume/analyze`. `response_model=AnalyzeResponse` tells FastAPI to validate the return value matches `AnalyzeResponse` before serializing to JSON.
+
+### The function signature
+
+```python
+async def analyze(body: AnalyzeRequest, user: Optional[dict] = Depends(get_current_user)):
+```
+
+- **`async def`** — non-blocking. While waiting on Groq or ChromaDB, the server handles other requests instead of freezing.
+- **`body: AnalyzeRequest`** — FastAPI sees this type hint and automatically parses the incoming JSON into the Pydantic model. Missing fields → 422 before the function runs.
+- **`Depends(get_current_user)`** — FastAPI runs `get_current_user` first, which extracts the JWT from the Authorization header and verifies it with Supabase. The result is passed in as `user`. Invalid token → 401, function never runs. `Optional` means guests (no token) still get through — they just won't have history saved.
+
+### Gate 1 — word count
+
+```python
+jd_words = body.job_description.strip().split()
+if len(jd_words) < 20:
+    raise HTTPException(status_code=422, detail="Job description is too short...")
+```
+
+Cheap check, no external calls. Fewer than 20 words → immediate 422.
+
+### Gate 2 — semantic validation
+
+```python
+if not is_valid_job_description(body.job_description):
+    raise HTTPException(status_code=422, detail="This doesn't look like a real job description...")
+```
+
+Calls `llm_service.is_valid_job_description()` — a tiny Groq call with `max_tokens=3` that asks "is this a real JD? yes or no." Catches multi-word gibberish that passes the word count. If `False` → 422, analysis never happens.
+
+### ChromaDB lookup
+
+```python
+chunks = query_resume(body.file_id, body.job_description)
+if not chunks:
+    raise HTTPException(status_code=404, detail="No resume data found for this file_id.")
+```
+
+Calls `embedder_service.query_resume()`. Converts the JD to a vector, does a cosine similarity search in ChromaDB filtered to this `file_id`, returns the top 5 most relevant resume text chunks.
+
+### GitHub context (optional)
+
+```python
+github_context = None
+if user:
+    connection = get_github_connection(user["id"])
+    if connection:
+        github_context = await fetch_github_profile(connection["github_username"], connection["github_token"])
+elif body.github_username and GITHUB_TOKEN:
+    github_context = await fetch_github_profile(body.github_username, GITHUB_TOKEN)
+```
+
+Two paths: logged-in users use their OAuth-connected GitHub token; guests can manually type a username and the server uses its own PAT. `github_context` is either a dict of repo data or `None`. Passed to `analyze_resume` — if `None`, the GitHub section is omitted from the prompt entirely.
+
+### The main LLM call
+
+```python
+result = analyze_resume(chunks, body.job_description, github_context)
+result["github_enriched"] = github_context is not None
+```
+
+Calls `llm_service.analyze_resume()` — the actual Groq call. Returns `{ score, matched_skills, missing_skills, qualification_gaps, summary }` as a plain Python dict. Tags it with `github_enriched` so the frontend knows whether GitHub data factored in.
+
+### Save to history
+
+```python
+if user:
+    save_analysis_result(body.file_id, result["score"], ...)
+```
+
+Only for logged-in users. Calls `history_service.save_analysis_result()` → INSERTs a new row into Supabase's `resume_history` table. Guests skip this.
+
+### Return
+
+```python
+return AnalyzeResponse(**result)
+```
+
+`**result` unpacks the dict into keyword arguments. FastAPI validates it against `AnalyzeResponse`, serializes to JSON, sends back with 200.
+
+### Full call chain
+
+```
+ResumeUpload.tsx
+  → POST /api/resume/analyze { file_id, job_description }
+    → get_current_user()          validates JWT → user dict or None
+    → word count check            no external calls
+    → is_valid_job_description()  fast Groq yes/no
+    → query_resume()              ChromaDB cosine similarity search
+    → fetch_github_profile()      GitHub API (optional)
+    → analyze_resume()            main Groq call → score + skills
+    → save_analysis_result()      Supabase INSERT (logged-in only)
+  ← AnalyzeResponse JSON
+    → written into ResumeContext
+    → score ring + skills rendered in UI
+```
+
+---
+
+## How Cosine Similarity Works in the Code
+
+Cosine similarity is not written manually — it's configured once and then handled automatically by ChromaDB.
+
+### Configuration (`embedder_service.py`)
+
+```python
+_collection = client.get_or_create_collection(
+    name="resumes",
+    metadata={"hnsw:space": "cosine"},
+)
+```
+
+`"hnsw:space": "cosine"` tells ChromaDB to use cosine similarity when searching this collection. HNSW (Hierarchical Navigable Small World) is the indexing algorithm that makes search fast — it doesn't compare your query against every stored vector one by one, it navigates a graph structure to find nearest neighbours efficiently.
+
+### On upload — storing vectors
+
+```python
+embeddings = _get_model().encode(chunks, show_progress_bar=False).tolist()
+_get_collection().add(
+    documents=chunks,
+    embeddings=embeddings,
+    ids=[f"{file_id}_{i}" for i in range(len(chunks))],
+    metadatas=[{"file_id": file_id, "filename": filename, "chunk_index": i} ...]
+)
+```
+
+Each resume chunk becomes a 384-number vector stored alongside the raw text and metadata. The `file_id` in metadata is how every query stays scoped to one user's resume.
+
+### On analyze — searching vectors
+
+```python
+def query_resume(file_id: str, query: str, n_results: int = 5) -> list[str]:
+    query_embedding = _get_model().encode([query]).tolist()
+    results = collection.query(
+        query_embeddings=query_embedding,
+        n_results=n_results,
+        where={"file_id": file_id},
+    )
+    return results["documents"][0]
+```
+
+The JD text is embedded using the **same model** as the resume chunks. This is critical — if you used different models, the vectors would live in different mathematical spaces and comparison would be meaningless. ChromaDB computes cosine similarity between the JD vector and every stored chunk vector for that `file_id`, returns the 5 closest.
+
+### The full picture
+
+```
+On upload:
+  resume chunks → all-MiniLM-L6-v2 → 384-dim vectors → stored in ChromaDB
+
+On analyze:
+  job description → all-MiniLM-L6-v2 → 384-dim vector
+                                              ↓
+                          ChromaDB cosine similarity search
+                          (angle between JD vector and each chunk vector)
+                                              ↓
+                          top 5 most similar chunk texts returned
+                                              ↓
+                          passed to Groq for scoring
+```
+
+**Why the same model matters:** Cosine similarity measures the angle between two vectors. That angle only means something if both vectors were produced by the same model with the same understanding of language. Same model = same vector space = valid comparison.
 
 ---
 
@@ -641,3 +910,198 @@ The next step for production would be adding a proper `files` table with `user_i
 | ---------------- | ---------------------------------------------------------------- |
 | PostgreSQL       | Proper files table with user_id FK; move off resume_history rows |
 | MCP integrations | LinkedIn JD fetch, deeper GitHub profile integration             |
+
+---
+
+## Architectural Tradeoffs
+
+These are the decisions worth being able to explain and defend.
+
+### 1. ChromaDB (local) vs Cloud Vector DB (Pinecone, Weaviate)
+
+**What it is:** ChromaDB runs on the same machine as FastAPI. It's SQLite-backed — just files on disk at `backend/chroma_db/`. No network calls, no accounts needed.
+
+|                       | ChromaDB (local)         | Pinecone/Weaviate (cloud)          |
+| --------------------- | ------------------------ | ---------------------------------- |
+| Cost                  | Free                     | $70+/month at scale                |
+| Latency               | ~5ms (same machine)      | ~50–200ms (network hop)            |
+| Setup                 | `pip install chromadb`   | API keys, account, config          |
+| Persistence           | Survives server restarts | Survives server restarts + crashes |
+| Serverless compatible | No                       | Yes                                |
+| Scale                 | Single server only       | Horizontally scalable              |
+
+**The real risk — serverless deployments (e.g. Vercel):**
+
+A normal server is always running with persistent disk access. A serverless platform like Vercel spins up a fresh container per request and throws it away after. There is no persistent filesystem. So:
+
+```
+Request 1 → Container A → embeddings written to /tmp/chroma_db ✓
+Request 2 → Container B (fresh) → /tmp/chroma_db doesn't exist ✗
+```
+
+This has nothing to do with logging out. Logging out is just a browser action — it clears a JWT. The problem is that between any two requests, Vercel might give you a completely new container. ChromaDB assumes a persistent filesystem; serverless doesn't provide one.
+
+**For production:** Replace ChromaDB with Pinecone or Supabase's pgvector extension. Only `embedder_service.py` changes — nothing else in the codebase knows which vector store is running.
+
+---
+
+### 2. Supabase Storage (cloud) vs Local Disk for Resume Files
+
+**What it is:** Raw PDF/DOCX bytes go directly to Supabase's `resumes` bucket on upload. The server never writes a file to its own disk.
+
+|                          | Supabase Storage             | Local Disk                        |
+| ------------------------ | ---------------------------- | --------------------------------- |
+| Survives server restart  | Yes                          | No                                |
+| Multi-server deployments | Yes (shared)                 | No (each server has its own copy) |
+| Cost                     | Generous free tier           | Free (your disk)                  |
+| Complexity               | Needs bucket config          | `open(path, 'wb')`                |
+| Privacy                  | Third party stores the files | Files stay on your server         |
+
+**Why `BytesIO` matters:** `parser_service.py` takes the raw bytes and opens them with `BytesIO` — an in-memory file-like object. Neither `pdfplumber` nor `python-docx` ever see a real file path. The bytes come in over HTTP, go to Supabase and to the parser simultaneously in memory, and nothing hits disk. This makes the backend stateless — restart it, and nothing is lost because no state ever lived on its disk.
+
+---
+
+### 3. Stateless JWT vs Server-Side Sessions
+
+**What it is:** JWTs are self-contained signed tokens. The server verifies them cryptographically without looking up anything in a database.
+
+|                      | JWT (stateless)                 | Server sessions                    |
+| -------------------- | ------------------------------- | ---------------------------------- |
+| Server memory needed | Zero                            | Grows with active users            |
+| Instant revocation   | Hard (token lives until expiry) | Easy (delete session row)          |
+| Horizontal scaling   | Trivial (any server can verify) | Needs shared session store (Redis) |
+| Complexity           | Supabase handles it entirely    | You manage session storage         |
+
+**The tradeoff most people miss:** You can't instantly log someone out with JWTs. If a token has a 1-hour expiry and you want to forcibly revoke it, the token is still valid until it expires — you can't "un-sign" it. Supabase mitigates this with short expiry (1 hour) + silent background refresh using a separate refresh token. For this app it's a non-issue.
+
+**Why stateless matters for scaling:** With a normal session, every server needs to be able to look up "is session ID abc123 valid?" — which means either one central database (bottleneck) or a shared cache like Redis. With JWTs, any server that has the signing key can verify any token independently. No coordination needed.
+
+---
+
+### 4. Groq vs OpenAI
+
+|                 | Groq                            | OpenAI                |
+| --------------- | ------------------------------- | --------------------- |
+| Speed           | Very fast (custom LPU hardware) | Moderate              |
+| Cost            | Free tier, very cheap           | More expensive        |
+| Model quality   | Good (Llama 3.3 70B)            | GPT-4o is stronger    |
+| Reliability     | Smaller company, newer          | Industry standard SLA |
+| Voice (Whisper) | Same model, much cheaper        | Same model, pricier   |
+
+**Groq's LPU (Language Processing Unit):** Custom silicon designed specifically for LLM inference — not repurposed GPU hardware. Makes streaming feel noticeably faster. For a demo, the difference is visible.
+
+**Why this decision is low-risk:** All Groq calls are isolated to `llm_service.py` and `interview_service.py`. Switching to OpenAI is changing two import lines and two API call formats — nothing in routes, context, or the frontend knows which LLM is running.
+
+---
+
+### 5. Local Embeddings vs API Embeddings
+
+|             | Local (sentence-transformers)     | OpenAI text-embedding-3-small |
+| ----------- | --------------------------------- | ----------------------------- |
+| Cost        | Free after one-time download      | ~$0.00002/1K tokens           |
+| Privacy     | Resume text never leaves server   | Sent to OpenAI                |
+| Cold start  | ~2–3s first request (model loads) | Instant                       |
+| Vector size | 384 dimensions                    | 1536 dimensions               |
+| Quality     | Good for resume matching          | Slightly better               |
+
+**Why privacy matters here:** Resumes contain personal information — names, addresses, employment history. With local embeddings, that text only goes to Groq (for scoring) and Supabase (for storage, explicitly consented to). It never goes to a third-party embeddings API. That's a selling point for enterprise use.
+
+**The cold start:** The `all-MiniLM-L6-v2` model is loaded as a lazy singleton — it loads on the first embedding request after startup and stays in memory. First request after a cold start takes 2–3 seconds. Every subsequent request is fast.
+
+---
+
+### 6. RAG vs Sending the Whole Resume
+
+**What it is:** RAG (Retrieval-Augmented Generation) = index once as vectors, retrieve only relevant parts at query time, send only those to the LLM.
+
+**Alternative:** Paste the entire resume text into every LLM prompt.
+
+|                      | RAG (this app)                 | Full document in every prompt |
+| -------------------- | ------------------------------ | ----------------------------- |
+| Cost per request     | Low (only relevant chunks)     | High (full resume every time) |
+| Context window limit | Not a concern                  | Breaks for long resumes       |
+| Focus                | LLM sees only relevant content | LLM must process everything   |
+| Upfront work         | Must chunk + embed on upload   | Nothing on upload             |
+| Latency              | Extra ChromaDB lookup          | Simpler, slightly faster      |
+
+**For this use case RAG is the right call:** A resume is 500–1500 words. The JD is another 500–1000. Together they approach or exceed context limits for some models. More importantly, RAG makes the LLM focus — when scoring a "Python engineering" JD, you want the LLM to see your Python projects, not your education section.
+
+---
+
+## Demo Script
+
+Lead with what the app does for the user. Explain the architecture only when asked.
+
+### Opening (30 seconds)
+
+> "Most people apply to jobs without knowing if their resume will get past the ATS filter — the automated system that screens resumes before a human ever sees them. This app tells you your score, what's missing, and then helps you prep for the interview."
+
+### Step 1 — Upload
+
+Drag the resume in. While it processes:
+
+> "The backend is parsing the PDF in memory using pdfplumber, splitting the text into overlapping chunks, and embedding each chunk with a local ML model. Those embeddings go into ChromaDB — a local vector database. This is what lets the chatbot and interview prep semantically search your resume later without re-reading the whole document every time."
+
+### Step 2 — Analyze
+
+Paste a JD, click Analyze. While it processes:
+
+> "It embeds the job description into a vector, finds the most semantically similar resume chunks via cosine similarity, and sends those chunks to Groq's Llama 3.3 70B model to produce a structured score."
+
+When results appear:
+
+> "You get a score, matched skills, missing skills — and qualification gaps, which are things the JD explicitly requires that your resume doesn't address. Like '5 years required' when your resume doesn't state years."
+
+### Step 3 — Interview Prep
+
+Click "Prep for this interview":
+
+> "Because the app already has my resume and the JD in context, questions start generating immediately. These aren't generic — Groq sees both my resume and the role requirements and generates questions grounded in what I actually wrote."
+
+Show feedback:
+
+> "The feedback prompt explicitly bans hollow praise. If your answer is weak, it tells you why and what to add."
+
+### Step 4 — Chatbot
+
+Open the chat widget:
+
+> "The chatbot has my resume as context. It uses the same RAG pipeline — my message gets embedded, ChromaDB returns the most relevant resume chunks, and those go into the system prompt. I can ask 'do I have any DevOps experience?' and it's searching my actual resume to answer."
+
+### Step 5 — History
+
+Navigate to History:
+
+> "Every ATS analysis is saved to Supabase — a cloud Postgres database. I can come back days later, see all my scores across different job descriptions, and delete individual entries. Deleting a resume removes both the database rows and the ChromaDB vectors so they don't accumulate as orphans."
+
+---
+
+### Common follow-up questions and tight answers
+
+**"Why Groq instead of OpenAI?"**
+
+> "Groq runs on custom LPU hardware — significantly faster and cheaper than GPU-based providers. And because all LLM calls are isolated to two service files, switching providers is a one-afternoon job."
+
+**"How does the chatbot know my resume?"**
+
+> "RAG pipeline. Message gets embedded, ChromaDB finds the most relevant resume chunks via cosine similarity, chunks go into the system prompt. The LLM never re-reads the whole resume — just the relevant parts."
+
+**"Could this scale?"**
+
+> "Two things to swap: ChromaDB for Pinecone or pgvector — needed because ChromaDB requires a persistent filesystem and serverless platforms don't provide one. And a proper files table in Postgres with user_id as a foreign key. Everything else — Supabase, Groq — is already cloud-native. Both swaps are single-file changes by design."
+
+**"How does auth work?"**
+
+> "Supabase issues a JWT on sign-in. The JS client stores it and auto-refreshes it before expiry. Every API call sends it in the Authorization header. The FastAPI backend verifies the signature with Supabase on each request — fully stateless, no session storage server-side."
+
+**"Why local embeddings instead of OpenAI?"**
+
+> "Two reasons: cost and privacy. Resumes contain personal data — with local embeddings it never leaves the server to go to a third-party API. And it's free. Quality is sufficient for semantic similarity on short resume chunks. Swapping to OpenAI embeddings in production is one line in `embedder_service.py`."
+
+**"What is a vector embedding?"**
+
+> "A list of numbers that encodes the meaning of text. Two sentences with similar meaning produce vectors that are mathematically close together, even if they share no words. 'Five years of Python experience' and 'built Python microservices since 2019' produce vectors with a small angle between them. That's what cosine similarity measures — the angle."
+
+**"Why INSERT instead of UPDATE for history rows?"**
+
+> "A user might analyze the same resume against five different job descriptions. UPDATE would silently overwrite the previous score. INSERT gives you a full history. The tradeoff is the table grows, but each row is tiny — it's the right call for this use case."
