@@ -12,6 +12,7 @@ import {
   Link2,
   Loader2,
   Mic,
+  Network,
   UploadCloud,
   X,
   Sparkles,
@@ -476,6 +477,16 @@ export function ResumeUpload() {
                 <Mic size={15} aria-hidden="true" />
                 Prep for this interview
               </button>
+            </div>
+            <div className="ru-intel-wrap">
+              <button
+                className="ru-intel-btn"
+                onClick={() => navigate('/apply', { state: { file_id: parseResult.file_id, job_description: jd } })}
+              >
+                <Network size={15} aria-hidden="true" />
+                Run Job Recon
+              </button>
+              <p className="ru-intel-desc">Research the company, optimize your bullets, and get company-specific interview questions. All in one run.</p>
             </div>
           </div>
         )}

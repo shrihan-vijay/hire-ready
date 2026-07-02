@@ -33,6 +33,7 @@ backend/app/
     routes.py              # Main router, wires sub-routers
     resume.py              # /upload, /analyze, /history (GET+DELETE) endpoints
     interview.py           # /questions, /feedback, /transcribe endpoints
+    mock_interview.py      # /mock-interview/start, /mock-interview/answer endpoints
     chat.py                # /chat SSE streaming endpoint
     github_auth.py         # GitHub OAuth connect/callback (origin-aware HMAC state)
   services/
@@ -42,6 +43,7 @@ backend/app/
     embedder_service.py    # Embeds chunks, stores/queries ChromaDB; delete_chunks()
     llm_service.py         # Groq: ATS scoring + is_valid_job_description() shared validator
     interview_service.py   # Groq: question generation, feedback, Whisper transcription
+    mock_interview_service.py  # Agent loop: session state, Groq tool calling, debrief generation
     chat_service.py        # Groq: streaming chat with resume RAG context
     history_service.py     # Supabase history: save (INSERT), fetch (grouped), delete, delete_analysis_entry
     jd_fetcher_service.py  # Fetches JD from URL: direct HTTP first, Jina Reader fallback
@@ -49,6 +51,7 @@ backend/app/
   models/
     resume.py              # Pydantic models: upload/analyze/history (ResumeFile, AnalysisEntry)
     interview.py           # Pydantic models: questions/feedback request/response
+    mock_interview.py      # Pydantic models: StartSessionRequest, SubmitAnswerRequest
     chat.py                # Pydantic models: ChatMessage, ChatRequest
   core/                    # Config (env vars, app settings), Supabase client, auth deps
 
@@ -65,7 +68,7 @@ frontend/src/
     Logo.tsx               # SVG logo (indigo-to-purple gradient)
     ChatBot.tsx            # Floating chat widget (SSE streaming, RAG context)
   pages/
-    InterviewPage.tsx      # Behavioral + role-specific interview prep + VoiceMicButton
+    InterviewPage.tsx      # Two tabs: Mock Interview (agent) + Question Bank (behavioral + role-specific sub-tabs)
     ProfilePage.tsx        # Account info + sign out (sign-in form if guest)
     HistoryPage.tsx        # Resume history: accordion by file, nested analyses, per-score delete
   App.tsx                  # Router, ResumeProvider keyed on user ID, nav, score guide, ChatBot
@@ -129,9 +132,11 @@ Upload rows have `score = null`. Each ATS analysis INSERTs a new row (not UPDATE
 - `DELETE /api/resume/history/{file_id}` — requires auth; deletes all Supabase rows + ChromaDB chunks for that file
 - `DELETE /api/resume/history/{file_id}/score?at=<timestamp>` — requires auth; deletes a single analysis row by `file_id + uploaded_at` composite key
 - `POST /api/resume/fetch-jd` — takes `{ url }`, fetches job description text from any URL; tries direct HTTP with browser-like headers first, falls back to Jina Reader for JS-rendered pages; returns `{ text, title }`
-- `POST /api/interview/questions` — takes `{ file_id?, job_description }`, validates JD (20-word minimum + semantic check), retrieves resume chunks, calls Groq; returns 8 questions (4 behavioral + 4 technical)
+- `POST /api/interview/questions` — takes `{ file_id?, job_description }`, validates JD (20-word minimum only — semantic check removed to avoid false rejections on URL-fetched JDs), retrieves resume chunks, calls Groq; returns 8 questions (4 behavioral + 4 technical)
 - `POST /api/interview/feedback` — takes `{ question, user_answer, file_id? }`, calls Groq with honest coaching rules; returns `{ feedback }`
 - `POST /api/interview/transcribe` — takes audio file (multipart), calls Groq `whisper-large-v3`; returns `{ text }`; supports `audio/mp4` (Safari), `audio/webm` (Chrome), `audio/ogg` (Firefox)
+- `POST /api/mock-interview/start` — takes `{ job_description, file_id? }`, generates 5 questions (3 behavioral + 2 technical, interleaved), stores session in memory, returns first question + `session_id`
+- `POST /api/mock-interview/answer` — takes `{ session_id, answer }`, runs one agent loop iteration via Groq tool calling; returns one of: `{ type: "followup", followup }` | `{ type: "next_question", question, question_number, total_questions }` | `{ type: "debrief", debrief }`
 - `POST /api/chat/` — takes `{ messages, file_id?, job_description? }`, queries ChromaDB for resume context, streams Groq response as SSE (`data: {"token": "..."}` then `data: [DONE]`)
 - `GET /api/github/connect` — starts GitHub OAuth; encodes frontend `Origin` header into HMAC-signed state so callback redirects to the exact host (fixes localhost vs 127.0.0.1 split)
 - `GET /api/github/callback` — verifies HMAC state, exchanges code for token, saves to Supabase, redirects to origin `/home?github=connected`
@@ -147,13 +152,11 @@ Upload rows have `score = null`. Each ATS analysis INSERTs a new row (not UPDATE
 - Cross-page state persistence via `ResumeContext` (survives React Router navigation)
 - `ResumeProvider` keyed on `user?.id ?? 'logged-out'` — resets context on login/logout to prevent stale state
 - GitHub connect: optional section on home upload card (below "Use previous resume"); dashed divider with "Enhance your score · optional" label; removed from ProfilePage
-- Interview Prep page:
-  - Behavioral mode: 15 hardcoded questions across 5 categories, instant load
-  - Role-specific mode: auto-generates on mount if JD present, calls Groq; JD validated on submit (not while typing) — shows error if too short or not a real JD
-  - All view (accordion cards) or One-by-one view (full card + prev/next + dot nav)
-  - AI feedback per answer (honest coaching, bans hollow praise)
-  - Word count warning for answers < 10 words
-  - Voice recording: `VoiceMicButton` uses `MediaRecorder` (auto-picks `audio/mp4` for Safari, `audio/webm` for Chrome) → POSTs to `/api/interview/transcribe` → transcript appends to answer; available in both All and One-by-one views
+- Interview Prep page — two main tabs:
+  - **Mock Interview** (default tab): adaptive agent-driven interview; 5 questions (3 behavioral + 2 technical); after each answer the LLM decides via Groq tool calling whether to ask a targeted follow-up or advance; ends with a scored debrief (overall score 0–100, hire recommendation, per-question feedback, strengths/improvements); session state held in-memory on backend keyed by `session_id`
+  - **Question Bank**: two sub-tabs — Behavioral (15 hardcoded questions across 5 categories, one-by-one default) and Role-Specific (auto-generates from JD + resume via Groq, one-by-one default); switching to Question Bank with a pre-loaded JD auto-navigates to Role-Specific sub-tab and triggers generation
+  - Both tabs support voice recording: `VoiceMicButton` uses `MediaRecorder` → POSTs to `/api/interview/transcribe` → transcript appends to answer
+  - AI feedback per answer (honest coaching, bans hollow praise, STAR format guidance)
 - History page: accordion list of uploaded resumes (newest first); click to expand → see all ATS scores; each analysis shows score badge, date, "View summary" toggle (Groq summary), skill chips, "Prep interview" button; per-score trash icon with inline confirmation; full-resume trash icon with confirmation; deletes Supabase rows + ChromaDB chunks
 - Chatbot: floating widget bottom-right (`ChatBot.tsx`); indigo/purple FAB; expandable panel with SSE streaming; auto-injects `file_id` (RAG via ChromaDB) and `jd` from `ResumeContext`; auth token from `useAuth().session`; when no resume loaded, directs user to upload rather than asking them to paste; visible to authed + guest users on all non-auth pages
 - "How it works" interactive 4-step stepper section (Step 2: matched/missing skill chips; Step 4: AI feedback coaching)
@@ -161,7 +164,35 @@ Upload rows have `score = null`. Each ATS analysis INSERTs a new row (not UPDATE
 - Profile page: email + sign out for logged-in users; sign-in/sign-up form for guests
 - ATS analysis includes `qualification_gaps` — amber warning box listing stated JD requirements the resume doesn't satisfy (years of experience, degree, certifications); scored by LLM alongside skills
 
+## Agent Architecture
+
+### Single Agent — Mock Interview
+`mock_interview_service.py` implements a single agent loop using Groq tool calling. Sessions are stored in a module-level dict (`_sessions`) keyed by UUID. The agent has three tools: `ask_followup`, `advance_to_next`, `end_interview`. Each HTTP request to `/answer` is one agent iteration — the LLM picks a tool, the backend executes it, and the result is returned to the frontend. `tool_choice="required"` forces the LLM to always call a tool rather than returning free text, making the response shape deterministic.
+
+```
+POST /answer
+  → build prompt with question + candidate's answer
+  → Groq tool call (tool_choice="required")
+  → LLM picks ask_followup | advance_to_next | end_interview
+  → execute: return followup text | load next question | generate debrief
+```
+
+Max one follow-up per question. After all questions answered, `_generate_debrief()` makes one final Groq call with the full transcript to produce a structured JSON report.
+
+### Planned: Multi-Agent Flows
+Two patterns are planned:
+
+**Parallel (fan-out):** Job Hunt Orchestrator — user pastes 3–5 JD URLs, orchestrator fires one scoring agent per JD simultaneously via `asyncio.gather()`, returns a ranked fit report. Total time = max(single agent latency), not sum.
+
+**Sequential (pipeline):** Application Intelligence — three specialized sub-agents run in order: Researcher (fetches company info + recent news) → Resume Optimizer (rewrites bullets using researcher output) → Interview Strategist (generates company-specific questions). Each agent's output feeds the next.
+
+### Planned: MCP Integrations
+MCP (Model Context Protocol) is a standard for giving LLMs access to external tools. Planned integrations:
+- LinkedIn MCP server — fetch job description text from LinkedIn URLs
+- GitHub MCP server — deeper repo analysis beyond the current OAuth profile fetch
+
 ## Planned Features
 
 - PostgreSQL (move from Supabase history rows to proper relational schema for files table)
+- Multi-agent pipelines (parallel job ranking, sequential application intelligence)
 - MCP integrations (LinkedIn JD fetch, deeper GitHub profile integration)

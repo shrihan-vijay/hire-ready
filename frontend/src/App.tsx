@@ -18,6 +18,7 @@ import { AuthGate } from './components/AuthGate'
 import { ProfilePage } from './pages/ProfilePage'
 import { InterviewPage } from './pages/InterviewPage'
 import { HistoryPage } from './pages/HistoryPage'
+import AppIntelPage from './pages/AppIntelPage'
 import { ResumeProvider, useResume } from './context/ResumeContext'
 import { useAuth } from './context/AuthContext'
 import { ChatBot } from './components/ChatBot'
@@ -236,6 +237,7 @@ function AppInner({
         />
         <Route path="/profile" element={<ProfilePage />} />
         <Route path="/history" element={isAuthed ? <HistoryPage /> : <Navigate to="/" replace />} />
+        <Route path="/apply" element={isAuthed ? <AppIntelPage /> : <Navigate to="/" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
 

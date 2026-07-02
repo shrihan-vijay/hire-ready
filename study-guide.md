@@ -71,6 +71,7 @@ backend/app/
     embedder_service.py    ← Embeds chunks + stores/queries ChromaDB; delete_chunks()
     llm_service.py         ← Groq: ATS scoring + is_valid_job_description() (shared validator)
     interview_service.py   ← Groq: question generation, feedback, Whisper transcription
+    mock_interview_service.py  ← Agent loop: in-memory sessions, Groq tool calling, debrief generation
     chat_service.py        ← Groq: streaming chatbot with resume RAG context
     history_service.py     ← Supabase history: save (INSERT), fetch (grouped), delete, delete_analysis_entry
     jd_fetcher_service.py  ← Fetches JD from URL: direct HTTP first, Jina Reader fallback
@@ -78,6 +79,7 @@ backend/app/
   models/
     resume.py              ← Pydantic models for upload/analyze/history (includes qualification_gaps)
     interview.py           ← Pydantic models for questions/feedback
+    mock_interview.py      ← Pydantic models: StartSessionRequest, SubmitAnswerRequest
     chat.py                ← Pydantic models: ChatMessage, ChatRequest
 
 frontend/src/
@@ -93,7 +95,7 @@ frontend/src/
     Logo.tsx               ← SVG logo component
     ChatBot.tsx            ← Floating chat widget (SSE streaming, RAG resume context)
   pages/
-    InterviewPage.tsx      ← Behavioral + role-specific prep + VoiceMicButton
+    InterviewPage.tsx      ← Mock Interview (agent) + Question Bank (behavioral + role-specific)
     ProfilePage.tsx        ← Account info + sign out (sign-in form if guest)
     HistoryPage.tsx        ← Resume history: accordion by file, nested analyses, per-score delete
   App.tsx                  ← Router, ResumeProvider keyed on user ID, nav, score guide, ChatBot
@@ -588,7 +590,67 @@ Feedback displayed below the textarea
 
 ---
 
-## End-to-End Flow 4: Chatbot
+## End-to-End Flow 4: Mock Interview Agent
+
+The mock interview is a **single agent** — an LLM that controls what happens next by calling tools, rather than your code deciding the flow in advance.
+
+```
+User clicks "Begin Mock Interview"
+        │
+        ▼  POST /api/mock-interview/start  { job_description, file_id? }
+[mock_interview_service.py]
+  - generate_questions() → 8 questions → take 3 behavioral + 2 technical (interleaved)
+  - store session in _sessions dict keyed by UUID:
+      { questions, question_index: 0, history: [], current_turn, status: "active" }
+  - return { session_id, question: {text, category, hint}, question_number: 1, total: 5 }
+        │
+        ▼  Frontend shows question 1, user types + submits answer
+        │
+        ▼  POST /api/mock-interview/answer  { session_id, answer }
+[mock_interview_service.process_answer()]
+  - Look up session → get current_turn
+  - If primary_answer is None → this is the first answer → call _agent_decide()
+  - If primary_answer is set → this is a follow-up answer → always advance
+
+[_agent_decide() — the agent loop]
+  Tools available:
+    ask_followup(followup: str)  — probe the answer with a targeted question
+    advance_to_next()            — answer was sufficient, move on
+    end_interview()              — all questions done
+  
+  Call Groq with tool_choice="required" (forces a tool call, never free text)
+        │
+        ▼  Groq returns one tool call
+  
+  If ask_followup:
+    → store followup question in current_turn
+    → return { type: "followup", followup: "..." }
+  
+  If advance_to_next / end_interview:
+    → archive current_turn to history[]
+    → question_index++
+    → if more questions: load next → return { type: "next_question", ... }
+    → if done: call _generate_debrief() → return { type: "debrief", ... }
+
+[_generate_debrief()]
+  - Format full transcript (all Q+A including follow-ups)
+  - Single Groq call → returns JSON:
+      { overall_score, hire_recommendation, overall_assessment,
+        strengths[], improvements[], per_question[{question, score, feedback}] }
+        │
+        ▼
+Frontend renders debrief: score block, hire badge, chips, per-question accordion
+```
+
+**Why tool_choice="required"?** Without it, the LLM might return a plain text response instead of calling a tool. `required` makes the response shape deterministic — you always get exactly one tool call back, which maps cleanly to the three possible actions.
+
+**Session storage:** In-memory Python dict — no database. Sessions are lost on server restart, which is fine for a dev app. Production would use Redis.
+
+**Max one follow-up per question:** Tracked in `current_turn["followup_question"]`. Once set, the next answer is treated as the follow-up answer and always advances — the agent is never called again for that question.
+
+---
+
+## End-to-End Flow 6: Chatbot
 
 Floating chat widget visible on all pages once authed. Auto-injects resume + JD context when available.
 
@@ -624,7 +686,7 @@ User opens chat panel → types message → hits Enter
 
 ---
 
-## End-to-End Flow 6: Resume History
+## End-to-End Flow 7: Resume History
 
 ```
 User navigates to /history
@@ -656,7 +718,7 @@ Frontend renders accordion:
 
 ---
 
-## End-to-End Flow 7: GitHub OAuth
+## End-to-End Flow 8: GitHub OAuth
 
 ```
 User clicks "Connect GitHub" on home upload card
@@ -855,6 +917,18 @@ The next step for production would be adding a proper `files` table with `user_i
 
 > Two layers. First, a word count check — fewer than 20 words gets rejected immediately before any LLM call. Second, a semantic check: a fast Groq call with `max_tokens=3` asks "is this a real job description?" and returns yes/no. This costs almost nothing but catches multi-word gibberish that passes the word count. Both checks live in shared code — `is_valid_job_description()` in `llm_service.py` — so `/analyze` and `/questions` use the exact same validation without duplication. On the frontend, the error only appears when the user clicks submit, not while they're typing — this avoids distracting mid-composition warnings.
 
+**"What's the difference between RAG and an agent? Which does this app use?"**
+
+> RAG is a retrieval pattern — your code retrieves context, stuffs it into a prompt, calls the LLM once, and returns. The LLM is passive. An agent is different: the LLM actively decides what to do next by calling tools. The mock interview uses an agent loop. After each candidate answer, the LLM picks one of three tools — ask_followup, advance_to_next, or end_interview. We use Groq's tool calling with `tool_choice="required"` to force a tool call every time, which makes the response shape predictable. The session state (transcript, current question index) lives server-side between HTTP requests. So each `/answer` call is one iteration of the agent loop — the LLM sees the question and answer, reasons about quality, and decides the next action without your code prescribing it.
+
+**"How is the mock interview agent different from just calling Groq and checking the output?"**
+
+> A naive approach would be: call Groq, parse the text response to see if it says "follow up" or "move on", branch on that. That's fragile — text parsing breaks, the LLM might say something unexpected, and you have no schema enforcement. Tool calling is different: you define structured tools with typed parameters, and the LLM returns a JSON tool call object instead of free text. `tool_choice="required"` ensures you always get a tool call back. The response is always one of three known shapes — no text parsing, no branching on strings. It's the difference between asking someone a yes/no question in prose versus giving them two buttons to click.
+
+**"How would you extend this to multi-agent?"**
+
+> The mock interview is one agent running sequentially. Multi-agent means multiple agents coordinated by an orchestrator. Two patterns: parallel (fan-out) and sequential (pipeline). For parallel — the Job Hunt Orchestrator — the user pastes five JD URLs, the orchestrator fires one scoring agent per URL simultaneously via `asyncio.gather()`, then aggregates and ranks. Total time is the slowest agent's time, not the sum. For sequential — Application Intelligence — a researcher agent fetches company context first, then a resume optimizer uses that output to rewrite bullets, then an interview strategist generates company-specific questions. You can't parallelize it because each agent needs the previous one's output. Both patterns use the same Groq tool calling underneath — the difference is just how the orchestrator coordinates them.
+
 **"How would you scale this for real users?"**
 
 > Files move from local disk to Supabase Storage (one line in `resume_service.py`). ChromaDB moves to Pinecone or Weaviate (one line in `embedder_service.py`). A Supabase PostgreSQL table maps file IDs to user accounts — the `file_id` already acts as the key across the entire pipeline, so adding a `user_id` foreign key is the main schema change. Groq swaps to OpenAI or Anthropic for production-grade SLAs (one line in the LLM services). Supabase's Row Level Security lets us enforce "users can only see their own rows" at the database level without any backend code change.
@@ -866,6 +940,107 @@ The next step for production would be adding a proper `files` table with `user_i
 **"What is CORS and why do you need it?"**
 
 > CORS is a browser policy that blocks requests to a different origin than the page was loaded from. Frontend is on port 5173, backend on 8000 — different origins. FastAPI's `CORSMiddleware` adds `Access-Control-Allow-Origin` headers so the browser permits the cross-origin requests.
+
+---
+
+## AI Agents — Single and Multi-Agent
+
+### What makes something an "agent" vs a regular LLM call?
+
+In every endpoint built before the mock interview, **your code** decides what happens: call ChromaDB, call Groq, return the result. The LLM is a text transformer — it answers one question and stops.
+
+An **agent** flips the control. The LLM decides what to do next by calling tools. Your code defines the available tools and runs a loop:
+
+```
+while True:
+    response = LLM(messages, tools)
+    if response is a tool call:
+        result = execute_tool(response.tool_name, response.args)
+        messages.append(result)          ← feed result back
+    else:
+        return response.text             ← LLM decided it's done
+```
+
+The LLM accumulates context across iterations and decides when to stop. That's the core idea.
+
+---
+
+### Single Agent
+
+One LLM in a loop with a set of tools. The mock interview is this pattern:
+
+```
+User submits answer
+        ↓
+Groq (tools: ask_followup | advance_to_next | end_interview)
+        ↓
+Picks one tool → backend executes it → returns result to frontend
+```
+
+Each HTTP request is one iteration of the loop. The loop state (session) lives server-side between requests. The LLM sees the question and the candidate's answer, then picks the right tool — it's not told which one to use, it reasons about the answer quality and decides.
+
+**Key properties:**
+- One LLM, multiple tool calls over time
+- State accumulates between iterations (full transcript builds up)
+- `tool_choice="required"` makes the response shape predictable — always a tool call, never free text
+- The agent can ask at most one follow-up per question (enforced in session logic, not by the LLM)
+
+---
+
+### Multi-Agent
+
+Multiple agents coordinated by an **orchestrator**. Each sub-agent has a narrow job and its own tools. Two patterns:
+
+#### Parallel (fan-out)
+All sub-agents start at the same time. Total time = slowest agent, not sum.
+
+```
+Orchestrator
+├── Agent A (JD 1) ─┐
+├── Agent B (JD 2) ─┼→ asyncio.gather() → aggregate results → ranked list
+└── Agent C (JD 3) ─┘
+```
+
+Use case: **Job Hunt Orchestrator** — user pastes 3–5 JD URLs, each gets scored against their resume simultaneously. Results are ranked by fit score.
+
+Only works when agents are **independent** — no agent needs another's output to start.
+
+#### Sequential (pipeline)
+Each agent's output feeds the next. Can't parallelize because of data dependencies.
+
+```
+Researcher Agent → company summary
+        ↓ (feeds into)
+Resume Optimizer Agent → rewritten bullets
+        ↓ (feeds into)
+Interview Strategist Agent → company-specific questions
+```
+
+Use case: **Application Intelligence** — the optimizer can't tailor bullets until the researcher has fetched company context.
+
+---
+
+### RAG vs Agents vs Multi-Agent — the key difference
+
+| | RAG (current app) | Single Agent (mock interview) | Multi-Agent (planned) |
+|---|---|---|---|
+| Who controls flow | Your code | The LLM | Orchestrator + LLMs |
+| LLM calls per request | 1 | N (one per answer) | N × M |
+| State between calls | None | Session dict | Per-agent + shared |
+| Latency | ~1–2s | ~2–4s per turn | Higher (parallel helps) |
+| Best for | Defined, predictable tasks | Open-ended with decision branches | Specialization or parallelism |
+
+---
+
+### MCP (Model Context Protocol)
+
+MCP is a standard that lets an LLM call **external tools** (APIs, databases, web browsers) in a structured, consistent way — rather than each integration being custom-built. Instead of writing a one-off LinkedIn scraper, you connect a LinkedIn MCP server and the LLM can call it the same way it calls any other tool.
+
+Planned integrations:
+- **LinkedIn MCP** — fetch real job description text from LinkedIn URLs (currently blocked by their anti-scraping measures)
+- **GitHub MCP** — deeper repo analysis, README parsing, commit history for stronger profile enrichment
+
+The distinction from current GitHub integration: the current GitHub OAuth flow is hand-coded (specific API calls, hardcoded fields). An MCP server exposes a general interface the LLM can call with arbitrary parameters, so it can explore the profile more dynamically.
 
 ---
 
@@ -891,10 +1066,13 @@ The next step for production would be adding a proper `files` table with `user_i
 | GitHub OAuth (origin-aware HMAC state)         | `github_auth.py`                                                            |
 | JD URL fetch (direct HTTP + Jina fallback)     | `POST /api/resume/fetch-jd`, `jd_fetcher_service.py`                        |
 | Role-specific interview questions              | `POST /api/interview/questions`, `interview_service.py`                     |
-| Behavioral question bank (15 questions)        | `InterviewPage.tsx` (hardcoded)                                             |
+| Behavioral question bank (15 questions)        | `InterviewPage.tsx` (hardcoded, 5 category groups)                          |
 | AI feedback on answers                         | `POST /api/interview/feedback`, `interview_service.py`                      |
 | Voice answer recording → Whisper transcription | `POST /api/interview/transcribe`, `VoiceMicButton` in `InterviewPage.tsx`   |
 | All / One-by-one question views                | `InterviewPage.tsx`                                                         |
+| Mock interview agent (tool calling loop)       | `POST /api/mock-interview/start` + `/answer`, `mock_interview_service.py`   |
+| Agent follow-up decision (Groq tool choice)    | `_agent_decide()` in `mock_interview_service.py`                            |
+| Scored debrief with hire recommendation        | `_generate_debrief()` in `mock_interview_service.py`                        |
 | Chatbot (SSE streaming, RAG context)           | `POST /api/chat/`, `chat_service.py`, `ChatBot.tsx`                         |
 | Cross-page state persistence                   | `ResumeContext.tsx`                                                         |
 | Nav + SVG logo + user avatar                   | `App.tsx`, `Logo.tsx`                                                       |
@@ -906,10 +1084,12 @@ The next step for production would be adding a proper `files` table with `user_i
 
 ## What's Next
 
-| Feature          | Notes                                                            |
-| ---------------- | ---------------------------------------------------------------- |
-| PostgreSQL       | Proper files table with user_id FK; move off resume_history rows |
-| MCP integrations | LinkedIn JD fetch, deeper GitHub profile integration             |
+| Feature                        | Notes                                                                              |
+| ------------------------------ | ---------------------------------------------------------------------------------- |
+| PostgreSQL                     | Proper files table with user_id FK; move off resume_history rows                  |
+| Multi-agent job ranking        | Parallel fan-out — score multiple JDs simultaneously via asyncio.gather()          |
+| Multi-agent application intel  | Sequential pipeline: researcher → resume optimizer → interview strategist          |
+| MCP integrations               | LinkedIn JD fetch, GitHub MCP for deeper profile analysis beyond current OAuth     |
 
 ---
 
