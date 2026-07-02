@@ -17,7 +17,7 @@ _DIRECT_HEADERS = {
     ),
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate, br",
+    "Accept-Encoding": "gzip, deflate",
     "Cache-Control": "no-cache",
     "Pragma": "no-cache",
     "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
@@ -89,6 +89,33 @@ def _extract_text(html: str) -> tuple[str, Optional[str]]:
     return re.sub(r"\s+", " ", raw).strip(), title
 
 
+_ASHBY_RE = re.compile(r"^https://jobs\.ashbyhq\.com/([^/]+)/([a-f0-9-]{36})", re.I)
+
+
+async def _fetch_ashby(org: str, job_id: str) -> Optional[dict]:
+    """Call Ashby's public posting API — avoids JS rendering entirely."""
+    api_url = f"https://api.ashbyhq.com/posting-api/job-board/{org}/published"
+    try:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            r = await client.get(api_url, headers={"Accept": "application/json"})
+            r.raise_for_status()
+            data = r.json()
+        for job in data.get("jobs", []):
+            if job.get("id") == job_id:
+                title = job.get("title", "")
+                desc_html = job.get("descriptionHtml", "")
+                if desc_html:
+                    soup = BeautifulSoup(desc_html, "html.parser")
+                    desc = soup.get_text(separator=" ", strip=True)
+                else:
+                    desc = job.get("descriptionPlain", "") or ""
+                if desc.strip():
+                    return {"text": desc[:10_000], "title": title}
+    except Exception:
+        pass
+    return None
+
+
 async def _fetch_via_jina(url: str) -> str:
     jina_url = f"https://r.jina.ai/{url}"
     async with httpx.AsyncClient(timeout=25.0, follow_redirects=True) as client:
@@ -105,6 +132,26 @@ async def fetch_jd_from_url(url: str) -> dict:
         raise HTTPException(
             status_code=422,
             detail="Please enter a valid URL starting with http:// or https://",
+        )
+
+    # Ashby-specific: their pages are JS-rendered and /application goes to a form,
+    # not the JD. Try their public API first; if that fails (private boards return 401),
+    # go straight to Jina on the clean job URL — skip the useless direct fetch.
+    ashby_match = _ASHBY_RE.match(url)
+    if ashby_match:
+        result = await _fetch_ashby(ashby_match.group(1), ashby_match.group(2))
+        if result:
+            return result
+        clean_url = f"https://jobs.ashbyhq.com/{ashby_match.group(1)}/{ashby_match.group(2)}"
+        try:
+            text = await _fetch_via_jina(clean_url)
+        except Exception:
+            text = ""
+        if len(text.split()) >= 50:
+            return {"text": text[:10_000], "title": None}
+        raise HTTPException(
+            status_code=422,
+            detail="Could not extract this Ashby job posting. The board may be private. Try copying and pasting the job description directly.",
         )
 
     text = ""

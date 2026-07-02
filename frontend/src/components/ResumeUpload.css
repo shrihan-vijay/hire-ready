@@ -895,6 +895,37 @@
   transform: translateY(-1px);
 }
 
+/* ── Home mode tabs ── */
+
+.ru-home-mode-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 12px 0 4px;
+  border-top: 1px solid #f3f4f6;
+  margin-top: 4px;
+}
+
+.ru-home-mode-btn {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 9px;
+  background: #fff;
+  color: #6b7280;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.ru-home-mode-btn:hover { background: #f9fafb; color: #374151; }
+
+.ru-home-mode-btn--active {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+  color: #4338ca;
+}
+
 .ru-intel-wrap {
   margin-top: 8px;
   display: flex;

@@ -49,3 +49,8 @@ class ResumeFile(BaseModel):
     filename: str
     uploaded_at: str
     analyses: list[AnalysisEntry]
+
+
+class RankJobsRequest(BaseModel):
+    file_id: str | None = None
+    urls: list[str]

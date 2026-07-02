@@ -57,7 +57,13 @@ Scoring rules:
 - Only penalise for qualifications that are explicitly stated in the JD — do not invent requirements.
 - If the JD does not state a qualification (e.g. no degree requirement mentioned), do not penalise for it.
 
-qualification_gaps: list each stated JD requirement that the resume does not clearly satisfy (e.g. "5+ years of experience required", "Bachelor's degree in Computer Science required", "Active security clearance required"). Keep each item short and specific. Return an empty list if all stated qualifications appear to be met or if the JD specifies none.
+Degree/graduation rules (critical — read carefully):
+- If the JD states a degree must be completed BY a specific date or window (e.g. "graduating by December 2027", "completed by June 2028", "class of 2026-2027"), compare that deadline against the candidate's expected graduation date shown in the resume.
+- If the resume shows an in-progress degree with a graduation date that falls ON or BEFORE the JD's deadline, the requirement IS met — do NOT flag it as a gap.
+- Only flag a degree gap if: (a) no degree is shown at all, (b) the graduation date is clearly AFTER the JD's deadline, or (c) the wrong field of study is required and not present.
+- Do not flag "currently enrolled" or "in progress" as a gap if the timeline is compatible.
+
+qualification_gaps: list each stated JD requirement that the resume does not clearly satisfy. Return an empty list if all stated qualifications appear to be met or if the JD specifies none.
 
 Respond with a JSON object in this exact format (no markdown, no code blocks, just raw JSON):
 {{

@@ -1,9 +1,12 @@
+import json
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 
 from app.core.auth import get_current_user
-from app.models.resume import AnalyzeRequest, AnalyzeResponse, FetchJDRequest, FetchJDResponse, ResumeFile, ResumeUploadResponse
+from app.models.resume import AnalyzeRequest, AnalyzeResponse, FetchJDRequest, FetchJDResponse, RankJobsRequest, ResumeFile, ResumeUploadResponse
+from app.services.job_ranker_service import stream_rankings
 from app.services.embedder_service import delete_chunks, query_resume
 from app.services.history_service import delete_analysis_entry, delete_resume_record, get_user_history, save_analysis_result, save_upload_record
 from app.core.config import GITHUB_TOKEN
@@ -111,3 +114,23 @@ async def history(user: dict = Depends(get_current_user)):
     if not user:
         raise HTTPException(status_code=401, detail="Authentication required")
     return get_user_history(user["id"])
+
+
+@router.post("/rank-jobs")
+async def rank_jobs(body: RankJobsRequest):
+    if not 2 <= len(body.urls) <= 5:
+        raise HTTPException(status_code=422, detail="Provide between 2 and 5 job URLs.")
+
+    async def event_stream():
+        try:
+            async for result in stream_rankings(body.file_id, body.urls):
+                yield f"data: {json.dumps(result)}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

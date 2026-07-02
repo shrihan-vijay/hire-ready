@@ -21,6 +21,7 @@ import {
 import { useResume } from '../context/ResumeContext'
 import type { ParseResult, AnalyzeResult } from '../context/ResumeContext'
 import { useAuth } from '../context/AuthContext'
+import { JobRanker } from './JobRanker'
 import './ResumeUpload.css'
 
 type UploadState = 'idle' | 'dragover' | 'uploading' | 'error'
@@ -97,6 +98,7 @@ export function ResumeUpload() {
   const [showGithubInfo, setShowGithubInfo] = useState(false)
   const [githubStatus, setGithubStatus] = useState<{ connected: boolean; username: string | null } | null>(null)
   const [githubSuccessMsg, setGithubSuccessMsg] = useState('')
+  const [homeMode, setHomeMode] = useState<'single' | 'rank'>('single')
   const [searchParams] = useSearchParams()
 
   useEffect(() => {
@@ -311,8 +313,31 @@ export function ResumeUpload() {
           </div>
         )}
 
-        {/* JD input — hide when results are showing */}
-        {analyzeState !== 'done' && !analyzeResult && (
+        {/* Mode switcher — shown after upload, hides once ATS results are showing */}
+        {!analyzeResult && (
+          <div className="ru-home-mode-tabs">
+            <button
+              className={`ru-home-mode-btn ${homeMode === 'single' ? 'ru-home-mode-btn--active' : ''}`}
+              onClick={() => setHomeMode('single')}
+            >
+              Match a Job
+            </button>
+            <button
+              className={`ru-home-mode-btn ${homeMode === 'rank' ? 'ru-home-mode-btn--active' : ''}`}
+              onClick={() => setHomeMode('rank')}
+            >
+              Rank Multiple Jobs
+            </button>
+          </div>
+        )}
+
+        {/* Rank mode */}
+        {homeMode === 'rank' && !analyzeResult && (
+          <JobRanker fileId={parseResult.file_id} />
+        )}
+
+        {/* JD input — hide when results are showing or in rank mode */}
+        {homeMode === 'single' && analyzeState !== 'done' && !analyzeResult && (
           <div className="ru-jd-section">
             <button className="ru-back-btn" onClick={reset}>
               <ArrowLeft size={14} aria-hidden="true" />
