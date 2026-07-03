@@ -320,7 +320,7 @@ export function ResumeUpload() {
               className={`ru-home-mode-btn ${homeMode === 'single' ? 'ru-home-mode-btn--active' : ''}`}
               onClick={() => setHomeMode('single')}
             >
-              Match a Job
+              Score a Job
             </button>
             <button
               className={`ru-home-mode-btn ${homeMode === 'rank' ? 'ru-home-mode-btn--active' : ''}`}
@@ -343,6 +343,7 @@ export function ResumeUpload() {
               <ArrowLeft size={14} aria-hidden="true" />
               Upload different resume
             </button>
+
             <div className="ru-jd-header">
               <p className="ru-jd-label">Add a job description to get your ATS score</p>
               <div className="ru-jd-mode-switch">
