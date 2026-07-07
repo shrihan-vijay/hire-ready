@@ -617,15 +617,15 @@ User clicks "Begin Mock Interview"
     ask_followup(followup: str)  — probe the answer with a targeted question
     advance_to_next()            — answer was sufficient, move on
     end_interview()              — all questions done
-  
+
   Call Groq with tool_choice="required" (forces a tool call, never free text)
         │
         ▼  Groq returns one tool call
-  
+
   If ask_followup:
     → store followup question in current_turn
     → return { type: "followup", followup: "..." }
-  
+
   If advance_to_next / end_interview:
     → archive current_turn to history[]
     → question_index++
@@ -980,6 +980,7 @@ Picks one tool → backend executes it → returns result to frontend
 Each HTTP request is one iteration of the loop. The loop state (session) lives server-side between requests. The LLM sees the question and the candidate's answer, then picks the right tool — it's not told which one to use, it reasons about the answer quality and decides.
 
 **Key properties:**
+
 - One LLM, multiple tool calls over time
 - State accumulates between iterations (full transcript builds up)
 - `tool_choice="required"` makes the response shape predictable — always a tool call, never free text
@@ -992,6 +993,7 @@ Each HTTP request is one iteration of the loop. The loop state (session) lives s
 Multiple agents coordinated by an **orchestrator**. Each sub-agent has a narrow job and its own tools. Two patterns:
 
 #### Parallel (fan-out)
+
 All sub-agents start at the same time. Total time = slowest agent, not sum.
 
 ```
@@ -1006,6 +1008,7 @@ Use case: **Job Hunt Orchestrator** — user pastes 3–5 JD URLs, each gets sco
 Only works when agents are **independent** — no agent needs another's output to start.
 
 #### Sequential (pipeline)
+
 Each agent's output feeds the next. Can't parallelize because of data dependencies.
 
 ```
@@ -1022,13 +1025,13 @@ Use case: **Application Intelligence** — the optimizer can't tailor bullets un
 
 ### RAG vs Agents vs Multi-Agent — the key difference
 
-| | RAG (current app) | Single Agent (mock interview) | Multi-Agent (planned) |
-|---|---|---|---|
-| Who controls flow | Your code | The LLM | Orchestrator + LLMs |
-| LLM calls per request | 1 | N (one per answer) | N × M |
-| State between calls | None | Session dict | Per-agent + shared |
-| Latency | ~1–2s | ~2–4s per turn | Higher (parallel helps) |
-| Best for | Defined, predictable tasks | Open-ended with decision branches | Specialization or parallelism |
+|                       | RAG (current app)          | Single Agent (mock interview)     | Multi-Agent (planned)         |
+| --------------------- | -------------------------- | --------------------------------- | ----------------------------- |
+| Who controls flow     | Your code                  | The LLM                           | Orchestrator + LLMs           |
+| LLM calls per request | 1                          | N (one per answer)                | N × M                         |
+| State between calls   | None                       | Session dict                      | Per-agent + shared            |
+| Latency               | ~1–2s                      | ~2–4s per turn                    | Higher (parallel helps)       |
+| Best for              | Defined, predictable tasks | Open-ended with decision branches | Specialization or parallelism |
 
 ---
 
@@ -1037,6 +1040,7 @@ Use case: **Application Intelligence** — the optimizer can't tailor bullets un
 MCP is a standard that lets an LLM call **external tools** (APIs, databases, web browsers) in a structured, consistent way — rather than each integration being custom-built. Instead of writing a one-off LinkedIn scraper, you connect a LinkedIn MCP server and the LLM can call it the same way it calls any other tool.
 
 Planned integrations:
+
 - **LinkedIn MCP** — fetch real job description text from LinkedIn URLs (currently blocked by their anti-scraping measures)
 - **GitHub MCP** — deeper repo analysis, README parsing, commit history for stronger profile enrichment
 
@@ -1084,12 +1088,12 @@ The distinction from current GitHub integration: the current GitHub OAuth flow i
 
 ## What's Next
 
-| Feature                        | Notes                                                                              |
-| ------------------------------ | ---------------------------------------------------------------------------------- |
-| PostgreSQL                     | Proper files table with user_id FK; move off resume_history rows                  |
-| Multi-agent job ranking        | Parallel fan-out — score multiple JDs simultaneously via asyncio.gather()          |
-| Multi-agent application intel  | Sequential pipeline: researcher → resume optimizer → interview strategist          |
-| MCP integrations               | LinkedIn JD fetch, GitHub MCP for deeper profile analysis beyond current OAuth     |
+| Feature                       | Notes                                                                          |
+| ----------------------------- | ------------------------------------------------------------------------------ |
+| PostgreSQL                    | Proper files table with user_id FK; move off resume_history rows               |
+| Multi-agent job ranking       | Parallel fan-out — score multiple JDs simultaneously via asyncio.gather()      |
+| Multi-agent application intel | Sequential pipeline: researcher → resume optimizer → interview strategist      |
+| MCP integrations              | LinkedIn JD fetch, GitHub MCP for deeper profile analysis beyond current OAuth |
 
 ---
 

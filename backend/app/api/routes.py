@@ -6,6 +6,7 @@ from app.api.mock_interview import router as mock_interview_router
 from app.api.github_auth import router as github_auth_router
 from app.api.app_intel import router as app_intel_router
 from app.api.chat import router as chat_router
+from app.api.applications import router as applications_router
 
 router = APIRouter()
 
@@ -24,3 +25,4 @@ router.include_router(mock_interview_router, prefix="/mock-interview", tags=["mo
 router.include_router(github_auth_router, prefix="/auth/github", tags=["auth"])
 router.include_router(chat_router, prefix="/chat", tags=["chat"])
 router.include_router(app_intel_router, prefix="/app-intel", tags=["app-intel"])
+router.include_router(applications_router, prefix="/applications", tags=["applications"])

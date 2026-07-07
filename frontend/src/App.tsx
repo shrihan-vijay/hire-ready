@@ -5,6 +5,7 @@ import {
   Clock,
   FileSearch,
   Home,
+  Kanban,
   LoaderCircle,
   Mic,
   ServerCrash,
@@ -19,6 +20,7 @@ import { ProfilePage } from './pages/ProfilePage'
 import { InterviewPage } from './pages/InterviewPage'
 import { HistoryPage } from './pages/HistoryPage'
 import AppIntelPage from './pages/AppIntelPage'
+import TrackerPage from './pages/TrackerPage'
 import { ResumeProvider, useResume } from './context/ResumeContext'
 import { useAuth } from './context/AuthContext'
 import { ChatBot } from './components/ChatBot'
@@ -36,6 +38,7 @@ const FEATURES = [
 const NAV_TABS = [
   { to: '/home',      label: 'Home',          icon: Home },
   { to: '/interview', label: 'Interview Prep', icon: Mic  },
+  { to: '/tracker',   label: 'Tracker',        icon: Kanban },
   { to: '/history',   label: 'History',        icon: Clock },
 ]
 
@@ -238,6 +241,7 @@ function AppInner({
         <Route path="/profile" element={<ProfilePage />} />
         <Route path="/history" element={isAuthed ? <HistoryPage /> : <Navigate to="/" replace />} />
         <Route path="/apply" element={isAuthed ? <AppIntelPage /> : <Navigate to="/" replace />} />
+        <Route path="/tracker" element={isAuthed ? <TrackerPage /> : <Navigate to="/" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
 

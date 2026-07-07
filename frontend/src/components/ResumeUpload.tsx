@@ -5,6 +5,7 @@ import {
   AlertCircle,
   AlertTriangle,
   ArrowLeft,
+  Bookmark,
   CheckCircle2,
   FileText,
   GitBranch,
@@ -22,6 +23,7 @@ import { useResume } from '../context/ResumeContext'
 import type { ParseResult, AnalyzeResult } from '../context/ResumeContext'
 import { useAuth } from '../context/AuthContext'
 import { JobRanker } from './JobRanker'
+import { AddApplicationModal } from './AddApplicationModal'
 import './ResumeUpload.css'
 
 type UploadState = 'idle' | 'dragover' | 'uploading' | 'error'
@@ -92,6 +94,8 @@ export function ResumeUpload() {
   const [jdMode, setJdMode] = useState<JdMode>('text')
   const [jdUrl, setJdUrl] = useState('')
   const [fetchingJd, setFetchingJd] = useState(false)
+  const [showTrackModal, setShowTrackModal] = useState(false)
+  const [tracked, setTracked] = useState(false)
   const [jdFetchError, setJdFetchError] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
   const [prevResume, setPrevResume] = useState<PrevResume | null>(null)
@@ -259,6 +263,7 @@ export function ResumeUpload() {
     setJdUrl('')
     setJdFetchError('')
     setAnalyzeError('')
+    setTracked(false)
   }
 
   function reset() {
@@ -270,6 +275,7 @@ export function ResumeUpload() {
     setJdMode('text')
     setJdUrl('')
     setJdFetchError('')
+    setTracked(false)
     clearAll()
     if (inputRef.current) inputRef.current.value = ''
   }
@@ -503,6 +509,14 @@ export function ResumeUpload() {
                 <Mic size={15} aria-hidden="true" />
                 Prep for this interview
               </button>
+              <button
+                className="ru-again-btn"
+                disabled={tracked}
+                onClick={() => setShowTrackModal(true)}
+              >
+                <Bookmark size={14} aria-hidden="true" />
+                {tracked ? 'Tracked' : 'Track this job'}
+              </button>
             </div>
             <div className="ru-intel-wrap">
               <button
@@ -517,6 +531,20 @@ export function ResumeUpload() {
           </div>
         )}
 
+        {showTrackModal && analyzeResult && (
+          <AddApplicationModal
+            prefill={{
+              fileId: parseResult.file_id,
+              score: analyzeResult.score,
+              jdSnippet: jd.slice(0, 300),
+            }}
+            onClose={() => setShowTrackModal(false)}
+            onCreated={() => {
+              setTracked(true)
+              setShowTrackModal(false)
+            }}
+          />
+        )}
       </div>
     )
   }

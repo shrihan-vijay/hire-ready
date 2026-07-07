@@ -1,0 +1,118 @@
+.aam-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(17, 24, 39, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 16px;
+}
+
+.aam-modal {
+  width: 100%;
+  max-width: 380px;
+  background: #fff;
+  border-radius: 14px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 20px 40px rgba(17, 24, 39, 0.2);
+}
+
+.aam-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.aam-header h3 {
+  font-size: 15px;
+  font-weight: 700;
+  color: #111827;
+  margin: 0;
+}
+
+.aam-close {
+  border: none;
+  background: #f3f4f6;
+  color: #6b7280;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.aam-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.aam-field label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.aam-field input,
+.aam-field textarea {
+  padding: 9px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 9px;
+  font-size: 13px;
+  color: #111827;
+  outline: none;
+  font-family: inherit;
+  resize: vertical;
+  transition: border-color 0.15s;
+}
+
+.aam-field input:focus,
+.aam-field textarea:focus { border-color: #818cf8; }
+
+.aam-error {
+  font-size: 12px;
+  color: #b91c1c;
+  margin: 0;
+}
+
+.aam-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.aam-btn {
+  padding: 8px 16px;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  min-width: 68px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.aam-btn:disabled { opacity: 0.6; cursor: default; }
+
+.aam-btn--ghost {
+  background: #f3f4f6;
+  color: #374151;
+  border: 1px solid #e5e7eb;
+}
+
+.aam-btn--primary {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: #fff;
+}
+
+.spin { animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }

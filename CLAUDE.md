@@ -19,7 +19,9 @@ An AI Resume & Interview Copilot — a full-stack app for tailoring resumes to j
 - ChromaDB (SQLite-backed) for vector storage at `backend/chroma_db/`
 - Groq API (`llama-3.3-70b-versatile`) for ATS scoring, interview question generation, feedback, and chatbot streaming
 - Groq Whisper (`whisper-large-v3`) for voice answer transcription
-- Supabase for auth (JWT) + history storage (`resume_history` table) + file storage (`resumes` bucket)
+- Supabase for auth (JWT) + relational storage (`resume_files`, `resume_analyses`, `job_applications` tables) + file storage (`resumes` bucket)
+- LangGraph for the Job Recon sequential multi-agent pipeline
+- GitHub MCP server (`@modelcontextprotocol/server-github`) for GitHub profile enrichment
 - CORS configured for localhost:5173 / 5174
 - dotenv for environment config (`backend/.env`, gitignored)
 
@@ -36,6 +38,8 @@ backend/app/
     mock_interview.py      # /mock-interview/start, /mock-interview/answer endpoints
     chat.py                # /chat SSE streaming endpoint
     github_auth.py         # GitHub OAuth connect/callback (origin-aware HMAC state)
+    app_intel.py           # /app-intel/run — Job Recon sequential pipeline (SSE)
+    applications.py        # /applications CRUD — application tracker
   services/
     resume_service.py      # Orchestrates: validate → upload to Supabase Storage → parse → chunk → embed
     parser_service.py      # Extracts text from PDF/DOCX via BytesIO (no disk writes)
@@ -45,14 +49,20 @@ backend/app/
     interview_service.py   # Groq: question generation, feedback, Whisper transcription
     mock_interview_service.py  # Agent loop: session state, Groq tool calling, debrief generation
     chat_service.py        # Groq: streaming chat with resume RAG context
-    history_service.py     # Supabase history: save (INSERT), fetch (grouped), delete, delete_analysis_entry
-    jd_fetcher_service.py  # Fetches JD from URL: direct HTTP first, Jina Reader fallback
-    github_service.py      # GitHub API calls (profile, repos)
+    history_service.py     # Supabase history: resume_files + resume_analyses CRUD
+    jd_fetcher_service.py  # Fetches JD from URL: Ashby API / direct HTTP / Jina Reader fallback
+    github_service.py      # GitHub MCP server calls (profile, repos)
+    github_connection_service.py  # Supabase storage of per-user GitHub OAuth connection
+    job_ranker_service.py  # Parallel (fan-out) job ranker: scores N JD URLs concurrently
+    app_intel_service.py   # LangGraph sequential pipeline: Researcher → Optimizer → Strategist
+    application_service.py # Application tracker CRUD (job_applications table)
   models/
-    resume.py              # Pydantic models: upload/analyze/history (ResumeFile, AnalysisEntry)
+    resume.py              # Pydantic models: upload/analyze/history/rank-jobs
     interview.py           # Pydantic models: questions/feedback request/response
     mock_interview.py      # Pydantic models: StartSessionRequest, SubmitAnswerRequest
     chat.py                # Pydantic models: ChatMessage, ChatRequest
+    app_intel.py           # Pydantic models: RunRequest
+    application.py         # Pydantic models: Create/UpdateApplicationRequest, Application
   core/                    # Config (env vars, app settings), Supabase client, auth deps
 
 frontend/src/
@@ -63,6 +73,8 @@ frontend/src/
     supabase.ts            # Supabase client singleton
   components/
     ResumeUpload.tsx       # Upload widget + JD input + ATS results card
+    JobRanker.tsx          # Parallel job ranker UI: paste 2-5 URLs, streamed ranked results
+    AddApplicationModal.tsx # Shared "track this job" form, reused by JobRanker/ResumeUpload/TrackerPage
     AuthGate.tsx           # Sign-in/sign-up/guest page at route /
     HowItWorks.tsx         # Interactive 4-step tutorial section
     Logo.tsx               # SVG logo (indigo-to-purple gradient)
@@ -71,6 +83,8 @@ frontend/src/
     InterviewPage.tsx      # Two tabs: Mock Interview (agent) + Question Bank (behavioral + role-specific sub-tabs)
     ProfilePage.tsx        # Account info + sign out (sign-in form if guest)
     HistoryPage.tsx        # Resume history: accordion by file, nested analyses, per-score delete
+    AppIntelPage.tsx       # "Job Recon" — Researcher/Optimizer/Strategist pipeline UI, streamed step-by-step
+    TrackerPage.tsx        # Application tracker — kanban board (Saved/Applied/Interviewing/Offer/Rejected)
   App.tsx                  # Router, ResumeProvider keyed on user ID, nav, score guide, ChatBot
 ```
 
@@ -107,20 +121,40 @@ This starts both servers. Backend on `127.0.0.1:8000`, frontend on `127.0.0.1:51
 
 ## Supabase Schema
 
+No migration tooling exists in this repo — tables are created by hand via the Supabase SQL editor. Schema is tracked here as the source of truth.
+
 ```sql
--- resume_history table (one row per upload OR per analysis)
+-- resume_files (one row per upload)
 file_id       text
 user_id       uuid
 filename      text
-score         int (null for upload-only rows)
+uploaded_at   timestamptz
+
+-- resume_analyses (one row per ATS analysis, FK'd to resume_files.file_id)
+file_id        text
+score          int
 matched_skills jsonb
 missing_skills jsonb
-jd_snippet    text (first 300 chars of JD)
-summary       text (Groq-generated plain-English summary)
-uploaded_at   timestamptz
+jd_snippet     text (first 300 chars of JD)
+summary        text (Groq-generated plain-English summary)
+analyzed_at    timestamptz
+
+-- job_applications (application tracker)
+id            uuid primary key default gen_random_uuid()
+user_id       uuid
+company_name  text
+job_title     text
+job_url       text (nullable)
+status        text (saved | applied | interviewing | offer | rejected)
+file_id       text (nullable — resume used, if tracked from an ATS/ranker flow)
+score         int (nullable — ATS score at time of tracking)
+jd_snippet    text (nullable)
+notes         text (nullable)
+created_at    timestamptz
+updated_at    timestamptz
 ```
 
-Upload rows have `score = null`. Each ATS analysis INSERTs a new row (not UPDATE). `get_user_history` groups by `file_id` so uploads never appear as blank cards.
+`get_user_history` joins `resume_files` → nested `resume_analyses` so uploads without an analysis yet still show up. No RLS on any table — access control is enforced in application code via the Supabase admin/service-role client with explicit `.eq("user_id", ...)` filters.
 
 ## Current Features
 
@@ -140,10 +174,16 @@ Upload rows have `score = null`. Each ATS analysis INSERTs a new row (not UPDATE
 - `POST /api/chat/` — takes `{ messages, file_id?, job_description? }`, queries ChromaDB for resume context, streams Groq response as SSE (`data: {"token": "..."}` then `data: [DONE]`)
 - `GET /api/github/connect` — starts GitHub OAuth; encodes frontend `Origin` header into HMAC-signed state so callback redirects to the exact host (fixes localhost vs 127.0.0.1 split)
 - `GET /api/github/callback` — verifies HMAC state, exchanges code for token, saves to Supabase, redirects to origin `/home?github=connected`
+- `POST /api/resume/rank-jobs` — takes `{ file_id?, urls: string[] }` (2–5 URLs), fires one scoring pass per URL concurrently via `asyncio.gather()`, streams each result as SSE as it completes; returns per-job `{ url, title, ok, score, matched_skills, missing_skills, summary, jd_snippet }`
+- `POST /api/app-intel/run` — takes `{ job_description, file_id? }`, runs the Job Recon LangGraph pipeline (Researcher → Resume Optimizer → Interview Strategist, each step's output feeding the next), streams each agent's output as SSE as it completes
+- `POST /api/applications/` — takes `{ company_name, job_title, job_url?, file_id?, score?, jd_snippet?, notes? }`; requires auth; creates a tracker entry with `status = "saved"`
+- `GET /api/applications/` — requires auth; lists the user's tracked applications, newest-updated first
+- `PATCH /api/applications/{id}` — takes `{ status?, notes? }`; requires auth; partial update (used by the kanban drag-and-drop to change status)
+- `DELETE /api/applications/{id}` — requires auth; deletes a tracked application
 
 ### Frontend
 - SVG logo (indigo-purple gradient with checkmark)
-- Sticky frosted-glass navbar with nav tabs (Home, Interview Prep, History) using NavLink
+- Sticky frosted-glass navbar with nav tabs (Home, Interview Prep, Tracker, History) using NavLink
 - Drag-and-drop resume upload with file preview, validation, success/error states
 - JD input: tab switcher between "Paste JD" (textarea) and "From URL" (fetches via `POST /api/resume/fetch-jd`, Jina Reader fallback for JS-rendered pages); ATS analysis: score ring (green ≥70, amber ≥45, red <45), matched/missing skills
 - "What does this mean?" link scrolls to ATS score guide section
@@ -163,6 +203,9 @@ Upload rows have `score = null`. Each ATS analysis INSERTs a new row (not UPDATE
 - ATS score guide section (4 range cards: 0-40 red, 41-60 amber, 61-79 blue, 80-100 green)
 - Profile page: email + sign out for logged-in users; sign-in/sign-up form for guests
 - ATS analysis includes `qualification_gaps` — amber warning box listing stated JD requirements the resume doesn't satisfy (years of experience, degree, certifications); scored by LLM alongside skills
+- Job Ranker (`JobRanker.tsx`, on the home upload card): paste 2–5 job listing URLs, ranks them by ATS fit against the loaded resume; each result card streams in with a score ring, matched/missing skill chips, and "Job Recon" / "Prep Interview" / "Track" actions
+- Job Recon (`AppIntelPage.tsx`, route `/apply`): runs the 3-agent Researcher → Resume Optimizer → Interview Strategist pipeline against a JD; each step's card (company research, before/after bullet rewrites, company-specific interview questions) appears as it streams in
+- Application Tracker (`TrackerPage.tsx`, route `/tracker`): kanban board with 5 columns (Saved/Applied/Interviewing/Offer/Rejected); drag a card between columns to update status (native HTML5 drag-and-drop, no external DnD library); "Track this job" button on the ATS results card and each Job Ranker result opens a shared `AddApplicationModal` prefilled with what's known (score, file_id, JD snippet, URL); manual "Add application" button on the tracker page itself for jobs never run through those tools; status changes and deletes are optimistic with a rollback-via-refetch on failure
 
 ## Agent Architecture
 
@@ -179,20 +222,17 @@ POST /answer
 
 Max one follow-up per question. After all questions answered, `_generate_debrief()` makes one final Groq call with the full transcript to produce a structured JSON report.
 
-### Planned: Multi-Agent Flows
-Two patterns are planned:
+### Parallel (fan-out) — Job Ranker
+`job_ranker_service.py` implements the fan-out pattern: `stream_rankings()` fires one scoring coroutine per JD URL via `asyncio.gather()`/`as_completed`-style streaming, so results appear as each URL finishes rather than waiting for the slowest. Total wall-clock time is max(single-URL latency), not the sum. Each coroutine fetches the JD (reusing `jd_fetcher_service`, including its Ashby-specific fast path), then scores it against the resume the same way `/resume/analyze` does. Exposed via `POST /api/resume/rank-jobs`, consumed by `JobRanker.tsx`.
 
-**Parallel (fan-out):** Job Hunt Orchestrator — user pastes 3–5 JD URLs, orchestrator fires one scoring agent per JD simultaneously via `asyncio.gather()`, returns a ranked fit report. Total time = max(single agent latency), not sum.
+### Sequential (pipeline) — Job Recon
+`app_intel_service.py` implements the sequential pattern using LangGraph. Three nodes run in order — `_researcher` (extracts company/tech-stack/culture signals from the JD), `_optimizer` (rewrites resume bullets using the researcher's output), `_strategist` (generates company-specific interview questions using both prior outputs) — each a single Groq call whose JSON output feeds the next node's prompt. `stream_pipeline()` yields `(node_name, output)` as each node completes; `POST /api/app-intel/run` forwards these as SSE. Consumed by `AppIntelPage.tsx` ("Job Recon"), which renders each step's card as it streams in.
 
-**Sequential (pipeline):** Application Intelligence — three specialized sub-agents run in order: Researcher (fetches company info + recent news) → Resume Optimizer (rewrites bullets using researcher output) → Interview Strategist (generates company-specific questions). Each agent's output feeds the next.
-
-### Planned: MCP Integrations
-MCP (Model Context Protocol) is a standard for giving LLMs access to external tools. Planned integrations:
-- LinkedIn MCP server — fetch job description text from LinkedIn URLs
-- GitHub MCP server — deeper repo analysis beyond the current OAuth profile fetch
+### MCP Integrations
+- **GitHub MCP server** (`github_service.py`) — connects to `@modelcontextprotocol/server-github` via stdio to fetch a candidate's public profile + top repos; the result is injected into the ATS scoring prompt (`llm_service.py`) so scoring/summary can factor in GitHub activity. Wired to both the OAuth-connected flow (logged-in users, `github_connection_service.py`) and a manual-username flow (guests, server PAT).
+- **Planned: LinkedIn MCP** — fetch JD text from LinkedIn URLs. Currently blocked: LinkedIn actively blocks automated access (see `jd_fetcher_service.py`'s explicit error message for LinkedIn/Indeed), and no public LinkedIn MCP server exists — low feasibility until that changes.
 
 ## Planned Features
 
-- PostgreSQL (move from Supabase history rows to proper relational schema for files table)
-- Multi-agent pipelines (parallel job ranking, sequential application intelligence)
-- MCP integrations (LinkedIn JD fetch, deeper GitHub profile integration)
+- Email-parsing automation for the Application Tracker (auto-detect status changes — interview invites, rejections, offers — from a connected inbox) as a stretch goal on top of the manual kanban tracker
+- LinkedIn JD fetch (see MCP Integrations above — blocked on LinkedIn's anti-scraping posture, not currently worth pursuing)

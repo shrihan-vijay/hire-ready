@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Loader2, Mic, Network, Plus, Trash2, X } from 'lucide-react'
+import { Bookmark, Loader2, Mic, Network, Plus, Trash2, X } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
+import { AddApplicationModal } from './AddApplicationModal'
 import './JobRanker.css'
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
@@ -47,6 +48,8 @@ export function JobRanker({ fileId }: { fileId: string | null }) {
   const [status, setStatus] = useState<'idle' | 'running' | 'done'>('idle')
   const [scored, setScored] = useState(0)
   const [expandedSummaries, setExpandedSummaries] = useState<Set<string>>(new Set())
+  const [trackTarget, setTrackTarget] = useState<JobResult | null>(null)
+  const [tracked, setTracked] = useState<Set<string>>(new Set())
 
   const validUrls = urls.filter((u) => u.trim().startsWith('http'))
 
@@ -215,6 +218,13 @@ export function JobRanker({ fileId }: { fileId: string | null }) {
                       >
                         <Mic size={12} /> Prep Interview
                       </button>
+                      <button
+                        className="jr-action-btn jr-action-btn--ghost"
+                        disabled={tracked.has(r.url)}
+                        onClick={() => setTrackTarget(r)}
+                      >
+                        <Bookmark size={12} /> {tracked.has(r.url) ? 'Tracked' : 'Track'}
+                      </button>
                     </div>
                   </div>
                 </>
@@ -230,6 +240,23 @@ export function JobRanker({ fileId }: { fileId: string | null }) {
             </div>
           ))}
         </div>
+      )}
+
+      {trackTarget && (
+        <AddApplicationModal
+          prefill={{
+            jobTitle: trackTarget.title,
+            jobUrl: trackTarget.url,
+            fileId,
+            score: trackTarget.score,
+            jdSnippet: trackTarget.jd_snippet,
+          }}
+          onClose={() => setTrackTarget(null)}
+          onCreated={() => {
+            setTracked((prev) => new Set(prev).add(trackTarget.url))
+            setTrackTarget(null)
+          }}
+        />
       )}
     </div>
   )
