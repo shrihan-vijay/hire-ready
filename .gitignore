@@ -224,3 +224,4 @@ dist/
 # OS
 .DS_Store
 uploads/
+backend/chroma_db/

@@ -180,7 +180,7 @@ export default function AppIntelPage() {
 
       {/* Pipeline Steps */}
       <div className="recon-pipeline">
-        {STEPS.map(({ key, num, label, sub, Icon }, i) => {
+        {STEPS.map(({ key, num, label, sub }, i) => {
           const status = steps[key]
           return (
             <div key={key} className={`recon-step recon-step--${status}`}>

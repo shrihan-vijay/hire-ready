@@ -94,13 +94,11 @@ function ViewToggle({ view, onChange }: { view: ViewMode; onChange: (v: ViewMode
 function OneByOneCard({
   questions,
   states,
-  fileId,
   onChangeAnswer,
   onFeedback,
 }: {
   questions: Question[]
   states: Record<string, QuestionState>
-  fileId?: string
   onChangeAnswer: (id: string, answer: string) => void
   onFeedback: (q: Question) => void
 }) {
@@ -600,14 +598,12 @@ function MockInterviewPanel({ fileId, initialJd }: { fileId?: string; initialJd:
 function QuestionCard({
   q,
   state,
-  fileId,
   onChange,
   onToggle,
   onFeedback,
 }: {
   q: Question
   state: QuestionState
-  fileId?: string
   onChange: (answer: string) => void
   onToggle: () => void
   onFeedback: () => void
@@ -941,7 +937,6 @@ export function InterviewPage() {
                           key={q.id}
                           q={q}
                           state={roleStates[q.id]}
-                          fileId={fileId}
                           onChange={(answer) =>
                             setRoleStates((prev) => ({ ...prev, [q.id]: { ...prev[q.id], answer } }))
                           }
@@ -959,7 +954,6 @@ export function InterviewPage() {
                     <OneByOneCard
                       questions={roleQuestions}
                       states={roleStates}
-                      fileId={fileId}
                       onChangeAnswer={(id, answer) =>
                         setRoleStates((prev) => ({ ...prev, [id]: { ...prev[id], answer } }))
                       }
