@@ -650,6 +650,47 @@ Frontend renders debrief: score block, hire badge, chips, per-question accordion
 
 ---
 
+## End-to-End Flow 5: Job Ranker (parallel multi-agent) and Job Recon (sequential multi-agent)
+
+Two different multi-agent patterns, both consumed from the home upload card / Job Ranker result cards.
+
+**Job Ranker — fan-out:**
+
+```
+User pastes 2-5 job listing URLs, clicks Rank
+        │
+        ▼  POST /api/resume/rank-jobs  { file_id?, urls }
+[job_ranker_service.stream_rankings()]
+  tasks = [asyncio.create_task(_score_url(file_id, url)) for url in urls]
+  for future in asyncio.as_completed(tasks):
+      yield await future
+        │  (each _score_url independently: fetch JD → query_resume RAG → analyze_resume via Groq)
+        ▼  SSE, one event per URL as it finishes — NOT in the order submitted
+Frontend (JobRanker.tsx): a result card renders the instant its SSE event arrives
+  score ring, matched/missing chips, "Job Recon" / "Prep Interview" / "Track" buttons
+```
+
+**Job Recon — sequential pipeline (LangGraph):**
+
+```
+User clicks "Job Recon" on a result card (or runs it directly with a pasted JD)
+        │
+        ▼  POST /api/app-intel/run  { job_description, file_id? }
+[app_intel_service.stream_pipeline()]
+  StateGraph: START → researcher → optimizer → strategist → END
+  researcher: JD → {company_name, tech_stack, culture_signals, key_themes, role_context}
+  optimizer:  researcher's output + resume_chunks → 4 {original, improved, reason} bullet rewrites
+  strategist: researcher's output + resume_chunks → 5 {question, why_theyll_ask, category}
+        │  _graph.astream() yields (node_name, output) as each Groq call finishes
+        ▼  SSE: one event per completed node, in strict order (can't reorder — each depends on the last)
+Frontend (AppIntelPage.tsx): renders the research card, then bullet rewrites, then interview questions,
+  each appearing as its own step completes rather than waiting for all three
+```
+
+**Why these two use different orchestration primitives:** Job Ranker's per-URL scoring jobs share nothing — plain `asyncio` is enough. Job Recon's three steps share a mutating state object and strict ordering, which is exactly what LangGraph's `StateGraph` is built for. Reaching for LangGraph on the fan-out case would add ceremony with no benefit; hand-rolling the pipeline case would mean re-implementing what `StateGraph` already gives for free (typed state, step-by-step streaming via `astream()`).
+
+---
+
 ## End-to-End Flow 6: Chatbot
 
 Floating chat widget visible on all pages once authed. Auto-injects resume + JD context when available.
@@ -745,22 +786,79 @@ User clicks "Connect GitHub" on home upload card
 
 ---
 
-## Supabase Schema
+## End-to-End Flow 9: Application Tracker
 
-```sql
--- resume_history table (one row per upload OR per analysis)
-file_id        text         -- UUID from upload
-user_id        uuid         -- foreign key to auth.users
-filename       text         -- original filename
-score          int          -- null for upload rows; 0-100 for analysis rows
-matched_skills jsonb        -- array of strings
-missing_skills jsonb        -- array of strings
-jd_snippet     text         -- first 300 chars of the pasted JD
-summary        text         -- Groq-generated plain-English summary
-uploaded_at    timestamptz
+```
+"Track this job" clicked on ATS results card / Job Ranker card
+        │
+        ▼  AddApplicationModal pre-filled with whatever's already known
+             (company_name, job_title, job_url, file_id, score, jd_snippet)
+        ▼  POST /api/applications/  { company_name, job_title, job_url?, file_id?, score?, jd_snippet?, notes? }
+[application_service.create_application()]
+  row = { user_id, status: "saved", **data }
+  INSERT into job_applications, return the created row
+        │
+        ▼  User navigates to /tracker
+        ▼  GET /api/applications/  → list_applications(), ordered by updated_at desc
+TrackerPage.tsx renders 5 columns (Saved/Applied/Interviewing/Offer/Rejected),
+  filtering the flat list into each column by `status`
+        │
+        ▼  User drags a card to a new column (native HTML5 drag-and-drop — no DnD library)
+  onDragStart: dataTransfer.setData('text/plain', app.id)
+  onDrop (target column): moveStatus(id, newStatus)
+        │
+        ▼  Optimistic update FIRST — setApplications(...) locally, THEN:
+        ▼  PATCH /api/applications/{id}  { status }
+[application_service.update_application()]
+  UPDATE job_applications SET status=..., updated_at=now() WHERE id=... AND user_id=...
+        │  if the PATCH fails → catch block calls load() again → re-fetches truth from the server,
+        │  silently reverting the optimistic change (rollback-via-refetch, not a manual undo)
 ```
 
-`get_user_history` groups these rows by `file_id` in Python — upload rows (score=null) anchor the card header, analysis rows become the nested `analyses` list. The frontend never sees blank cards.
+**Why optimistic update + rollback-via-refetch instead of waiting for the server response?** Drag-and-drop feels broken if the card snaps back into place for a network round-trip before moving. The UI updates instantly on drop; the PATCH happens in the background. On the rare failure, refetching the whole list is simpler and more correct than trying to hand-roll a targeted undo of one optimistic mutation.
+
+**Why `job_applications` has its own `file_id`/`score`/`jd_snippet` columns instead of just a foreign key to `resume_analyses`:** applications can be tracked from three different entry points — ATS results, Job Ranker results, or a manual "Add application" button with none of that context. Denormalizing the snapshot values onto the tracker row means a tracked application still shows a score even after the original resume or analysis is deleted from history.
+
+---
+
+## Supabase Schema
+
+The original design used one flat `resume_history` table (upload rows with score=null + analysis rows in the same table, grouped by `file_id` in Python). That was migrated to two properly related tables, plus a third for the Application Tracker:
+
+```sql
+-- resume_files (one row per upload)
+file_id       text
+user_id       uuid
+filename      text
+uploaded_at   timestamptz
+
+-- resume_analyses (one row per ATS analysis, FK'd to resume_files.file_id)
+file_id        text
+score          int
+matched_skills jsonb
+missing_skills jsonb
+jd_snippet     text (first 300 chars of the JD)
+summary        text (Groq-generated plain-English summary)
+analyzed_at    timestamptz
+
+-- job_applications (application tracker)
+id            uuid primary key default gen_random_uuid()
+user_id       uuid
+company_name  text
+job_title     text
+job_url       text (nullable)
+status        text (saved | applied | interviewing | offer | rejected)
+file_id       text (nullable — resume used, if tracked from an ATS/ranker flow)
+score         int (nullable — ATS score at time of tracking)
+jd_snippet    text (nullable)
+notes         text (nullable)
+created_at    timestamptz
+updated_at    timestamptz
+```
+
+`get_user_history` does a real Supabase **join**, not Python grouping — `.select("file_id, filename, uploaded_at, resume_analyses(score, matched_skills, missing_skills, jd_snippet, summary, analyzed_at)")` — so an upload with zero analyses still returns a row with an empty `analyses` list, and the frontend never sees blank cards. Splitting into two tables (instead of the original single flat table) means each upload row is written exactly once instead of being duplicated across every analysis, and a `resume_files` row with no analyses yet is representable without a null-score sentinel row.
+
+No RLS on any table — access control is enforced in application code via the Supabase admin/service-role client with explicit `.eq("user_id", ...)` filters on every query.
 
 ---
 
@@ -925,13 +1023,21 @@ The next step for production would be adding a proper `files` table with `user_i
 
 > A naive approach would be: call Groq, parse the text response to see if it says "follow up" or "move on", branch on that. That's fragile — text parsing breaks, the LLM might say something unexpected, and you have no schema enforcement. Tool calling is different: you define structured tools with typed parameters, and the LLM returns a JSON tool call object instead of free text. `tool_choice="required"` ensures you always get a tool call back. The response is always one of three known shapes — no text parsing, no branching on strings. It's the difference between asking someone a yes/no question in prose versus giving them two buttons to click.
 
-**"How would you extend this to multi-agent?"**
+**"Walk me through the two multi-agent flows you built — Job Ranker and Job Recon."**
 
-> The mock interview is one agent running sequentially. Multi-agent means multiple agents coordinated by an orchestrator. Two patterns: parallel (fan-out) and sequential (pipeline). For parallel — the Job Hunt Orchestrator — the user pastes five JD URLs, the orchestrator fires one scoring agent per URL simultaneously via `asyncio.gather()`, then aggregates and ranks. Total time is the slowest agent's time, not the sum. For sequential — Application Intelligence — a researcher agent fetches company context first, then a resume optimizer uses that output to rewrite bullets, then an interview strategist generates company-specific questions. You can't parallelize it because each agent needs the previous one's output. Both patterns use the same Groq tool calling underneath — the difference is just how the orchestrator coordinates them.
+> Both are multi-agent, but they're different orchestration patterns because the sub-tasks have different data dependencies. Job Ranker is fan-out: the user pastes 2-5 job URLs, and I fire one scoring coroutine per URL with `asyncio.create_task` + `asyncio.as_completed` — each one fetches its own JD, does the same RAG-and-Groq scoring as `/analyze`, and results stream back over SSE the instant each one finishes, not in submission order. That's safe because the URLs are completely independent — no agent needs another's output. Job Recon is the opposite: a researcher agent extracts company/tech-stack/culture signals from the JD, a resume optimizer rewrites bullets using the researcher's output, and an interview strategist generates company-specific questions using both prior outputs. That has to be sequential — the optimizer's prompt literally can't be built until the researcher's JSON comes back. I used LangGraph for that one specifically: a `StateGraph` with a shared typed state each node reads and writes, and `astream()` gives me step-by-step SSE events without hand-rolling a generator.
+
+**"Why LangGraph for Job Recon but plain asyncio for Job Ranker? Why not use LangGraph everywhere?"**
+
+> LangGraph earns its keep when there's a state machine to model — nodes that depend on shared, evolving state and need explicit ordering. Job Recon is exactly that. Job Ranker has no shared state at all — each URL's scoring is a completely isolated coroutine — so `asyncio.gather`/`as_completed` is simpler and has zero framework overhead. Reaching for LangGraph on independent parallel work would just be ceremony; hand-rolling the pipeline's ordering and state-passing in Job Recon would mean re-implementing what `StateGraph` already gives for free.
+
+**"How does the Application Tracker's drag-and-drop work, and what happens if the backend call fails?"**
+
+> Native HTML5 drag-and-drop — no external library. `onDragStart` stashes the application ID in `dataTransfer`; the target column's `onDrop` reads it and calls `moveStatus`. The status update is optimistic: React state updates immediately so the card visually moves before any network round-trip, then a `PATCH /api/applications/{id}` fires in the background. If that PATCH fails, the catch block just re-fetches the full list from the server — that's the rollback. It's simpler than hand-rolling a targeted undo, and for a five-column kanban board a full re-fetch is cheap enough that the simplicity wins.
 
 **"How would you scale this for real users?"**
 
-> Files move from local disk to Supabase Storage (one line in `resume_service.py`). ChromaDB moves to Pinecone or Weaviate (one line in `embedder_service.py`). A Supabase PostgreSQL table maps file IDs to user accounts — the `file_id` already acts as the key across the entire pipeline, so adding a `user_id` foreign key is the main schema change. Groq swaps to OpenAI or Anthropic for production-grade SLAs (one line in the LLM services). Supabase's Row Level Security lets us enforce "users can only see their own rows" at the database level without any backend code change.
+> A lot of this is already done, not hypothetical — resume files already go to Supabase Storage rather than local disk, and Supabase's Postgres tables already map every `file_id` to a `user_id`. The remaining swaps are still single-file by design: ChromaDB moves to Pinecone or pgvector (one file — `embedder_service.py`) once a single server's local disk stops being enough; Groq swaps to OpenAI or Anthropic for production SLAs (two files — the LLM services); mock interview session state moves from an in-memory Python dict to Redis so sessions survive a server restart or load-balancing across multiple instances. Supabase's Row Level Security could also replace the current pattern of enforcing `user_id` filters in application code, pushing that guarantee down to the database itself.
 
 **"Why FastAPI over Flask or Django?"**
 
@@ -992,59 +1098,115 @@ Each HTTP request is one iteration of the loop. The loop state (session) lives s
 
 Multiple agents coordinated by an **orchestrator**. Each sub-agent has a narrow job and its own tools. Two patterns:
 
-#### Parallel (fan-out)
+#### Parallel (fan-out) — built: Job Ranker
 
-All sub-agents start at the same time. Total time = slowest agent, not sum.
-
-```
-Orchestrator
-├── Agent A (JD 1) ─┐
-├── Agent B (JD 2) ─┼→ asyncio.gather() → aggregate results → ranked list
-└── Agent C (JD 3) ─┘
-```
-
-Use case: **Job Hunt Orchestrator** — user pastes 3–5 JD URLs, each gets scored against their resume simultaneously. Results are ranked by fit score.
-
-Only works when agents are **independent** — no agent needs another's output to start.
-
-#### Sequential (pipeline)
-
-Each agent's output feeds the next. Can't parallelize because of data dependencies.
+All sub-agents start at the same time. Total time = slowest agent, not sum. This is shipped, not hypothetical — `job_ranker_service.py`.
 
 ```
-Researcher Agent → company summary
-        ↓ (feeds into)
-Resume Optimizer Agent → rewritten bullets
-        ↓ (feeds into)
-Interview Strategist Agent → company-specific questions
+POST /api/resume/rank-jobs  { file_id?, urls: [2..5 JD URLs] }
+        │
+        ▼
+stream_rankings(file_id, urls)
+  tasks = [asyncio.create_task(_score_url(file_id, url)) for url in urls]
+  for future in asyncio.as_completed(tasks):
+      yield await future        ← yields each result AS it finishes, not in URL order
+        │
+        ▼  each _score_url() coroutine, independently:
+  1. fetch_jd_from_url(url)     ← reuses jd_fetcher_service (Ashby fast path, Jina fallback)
+  2. reject if JD < 50 words
+  3. query_resume(file_id, jd_text)  ← ChromaDB RAG, same as /analyze
+  4. analyze_resume(chunks, jd_text) ← same Groq scoring call as /analyze
+        │
+        ▼  StreamingResponse, one SSE event per completed URL
+  data: {"url":..., "ok": true, "score": 82, "matched_skills":[...], ...}
+  data: {"url":..., "ok": false, "error": "..."}   ← per-URL failure doesn't kill the batch
+  ...
+  data: [DONE]
 ```
 
-Use case: **Application Intelligence** — the optimizer can't tailor bullets until the researcher has fetched company context.
+**Why `asyncio.as_completed` instead of `asyncio.gather`:** `gather` waits for every task and returns one list at the end — the user stares at a blank screen until the slowest JD (often a slow-loading page) finishes. `as_completed` yields each result the moment it's ready, so a card renders the instant its scoring finishes, independent of the others. Total wall-clock is still bounded by the slowest URL, but perceived latency is much lower.
+
+**Why each `_score_url` call is wrapped in its own try/except:** One bad URL (dead link, login-walled page, sparse content) returns `{ok: false, error: ...}` instead of raising and killing the other 4 in-flight scoring calls.
+
+Only works because the jobs are **independent** — no agent needs another's output to start.
+
+#### Sequential (pipeline) — built: Job Recon
+
+Each agent's output feeds the next. Can't parallelize because of data dependencies. Implemented with **LangGraph** (`app_intel_service.py`), not hand-rolled — a `StateGraph` with one shared `TypedDict` state that each node reads from and writes back into.
+
+```
+POST /api/app-intel/run  { job_description, file_id? }
+        │
+        ▼
+AppIntelState = { job_description, resume_chunks, company_name, tech_stack,
+                  culture_signals, key_themes, role_context,
+                  bullet_suggestions, strategic_questions }
+
+StateGraph(AppIntelState)
+  START → researcher → optimizer → strategist → END
+
+  _researcher(state)   → Groq call → {company_name, tech_stack, culture_signals,
+                                       key_themes, role_context}
+        ↓ merged into state
+  _optimizer(state)    → Groq call, prompt includes researcher's fields +
+                          resume_chunks → 4 {original, improved, reason} bullets
+        ↓ merged into state
+  _strategist(state)   → Groq call, prompt includes researcher's fields +
+                          resume_chunks → 5 {question, why_theyll_ask, category}
+        │
+        ▼
+_graph.astream(initial) yields (node_name, node_output) as each node finishes
+        │
+        ▼  SSE: data: {"step": "researcher", "data": {...}}
+            data: {"step": "optimizer", "data": {...}}
+            data: {"step": "strategist", "data": {...}}
+            data: [DONE]
+        │
+        ▼  AppIntelPage.tsx renders each card as its step's SSE event arrives
+```
+
+**Why LangGraph instead of three sequential function calls in a for-loop?** For three linear nodes, a plain function chain would work almost identically — LangGraph's value here is the explicit `StateGraph` (one typed schema every node reads/writes, so nodes can't silently drop fields) and `astream()` giving step-by-step events for free instead of hand-rolling a generator. It also sets up cleanly for future branching/looping (e.g. a "revise strategist output" edge) without restructuring the flow.
+
+**Why it can't be parallel:** the optimizer's prompt literally interpolates `state["company_name"]`, `state["tech_stack"]`, etc. — fields that don't exist until the researcher node returns. Same for the strategist, which depends on both prior nodes' output.
 
 ---
 
 ### RAG vs Agents vs Multi-Agent — the key difference
 
-|                       | RAG (current app)          | Single Agent (mock interview)     | Multi-Agent (planned)         |
-| --------------------- | -------------------------- | --------------------------------- | ----------------------------- |
-| Who controls flow     | Your code                  | The LLM                           | Orchestrator + LLMs           |
-| LLM calls per request | 1                          | N (one per answer)                | N × M                         |
-| State between calls   | None                       | Session dict                      | Per-agent + shared            |
-| Latency               | ~1–2s                      | ~2–4s per turn                    | Higher (parallel helps)       |
-| Best for              | Defined, predictable tasks | Open-ended with decision branches | Specialization or parallelism |
+|                       | RAG (analyze/questions/chat) | Single Agent (mock interview)     | Multi-Agent (Job Ranker / Job Recon) |
+| --------------------- | ----------------------------- | ---------------------------------- | ------------------------------------- |
+| Who controls flow     | Your code                     | The LLM                            | Orchestrator (asyncio / LangGraph) + LLMs |
+| LLM calls per request | 1                              | N (one per answer)                 | N (fan-out) or 3 (pipeline)           |
+| State between calls   | None                           | Session dict                       | Shared `AppIntelState` (pipeline) / none (fan-out) |
+| Latency               | ~1-2s                          | ~2-4s per turn                     | Job Ranker: max(single-URL latency). Job Recon: sum of 3 sequential calls |
+| Best for              | Defined, predictable tasks    | Open-ended with decision branches  | Specialization (pipeline) or independent parallel work (fan-out) |
 
 ---
 
 ### MCP (Model Context Protocol)
 
-MCP is a standard that lets an LLM call **external tools** (APIs, databases, web browsers) in a structured, consistent way — rather than each integration being custom-built. Instead of writing a one-off LinkedIn scraper, you connect a LinkedIn MCP server and the LLM can call it the same way it calls any other tool.
+MCP is a standard protocol for connecting to external tool servers over a consistent interface (stdio or HTTP transport, JSON-RPC underneath) instead of hand-writing a bespoke client for every API. Once connected, the caller lists the server's tools and invokes them by name with structured args — the same shape regardless of which server it is.
 
-Planned integrations:
+**Built: GitHub MCP** (`github_service.py`) — spawns `@modelcontextprotocol/server-github` as a subprocess over stdio:
 
-- **LinkedIn MCP** — fetch real job description text from LinkedIn URLs (currently blocked by their anti-scraping measures)
-- **GitHub MCP** — deeper repo analysis, README parsing, commit history for stronger profile enrichment
+```python
+server_params = StdioServerParameters(
+    command="npx", args=["-y", "@modelcontextprotocol/server-github"],
+    env={**os.environ, "GITHUB_PERSONAL_ACCESS_TOKEN": token},
+)
+async with stdio_client(server_params) as (read, write):
+    async with ClientSession(read, write) as session:
+        await session.initialize()
+        search = await session.call_tool("search_repositories", {"query": f"user:{username} sort:stars", "perPage": 8})
+        ...
+        readme = await session.call_tool("get_file_contents", {"owner": username, "repo": repo, "path": "README.md"})
+```
 
-The distinction from current GitHub integration: the current GitHub OAuth flow is hand-coded (specific API calls, hardcoded fields). An MCP server exposes a general interface the LLM can call with arbitrary parameters, so it can explore the profile more dynamically.
+The result (top non-fork repos + decoded READMEs, forks filtered out, markdown stripped) is folded into the ATS scoring prompt in `llm_service.py`, so a candidate's actual GitHub activity can supplement — or fill gaps in — what's on the resume.
+
+**Note this is separate from GitHub OAuth** (`github_auth.py`): OAuth is how the app gets a **token** for a given user (the three-leg redirect/callback/HMAC-state dance described below). MCP is what the app **does** with that token once it has it — call the GitHub MCP server's tools instead of hand-rolling raw GitHub REST calls. Two different concerns, wired together: OAuth produces the credential, MCP consumes it.
+
+**Planned: LinkedIn MCP** — fetch JD text from LinkedIn URLs the same way. Currently blocked: LinkedIn actively blocks automated access, and no public LinkedIn MCP server exists yet — low feasibility until that changes. This is why `jd_fetcher_service.py` returns an explicit "can't fetch LinkedIn/Indeed" error rather than silently failing.
 
 ---
 
@@ -1085,15 +1247,20 @@ The distinction from current GitHub integration: the current GitHub OAuth flow i
 | Supabase JWT auth — frontend                   | `AuthContext.tsx`, `lib/supabase.ts`                                        |
 | Supabase JWT auth — backend                    | `core/auth.py`, `core/supabase.py`                                          |
 | Profile page (account info + sign out)         | `ProfilePage.tsx`, route `/profile`                                         |
+| GitHub MCP profile enrichment                  | `github_service.py` (stdio MCP client), folded into ATS prompt              |
+| Split history storage (files vs analyses)      | `resume_files` + `resume_analyses` tables, `history_service.py`             |
+| Job Ranker — parallel fan-out multi-agent      | `POST /api/resume/rank-jobs`, `job_ranker_service.py`, `JobRanker.tsx`      |
+| Job Recon — sequential LangGraph pipeline      | `POST /api/app-intel/run`, `app_intel_service.py`, `AppIntelPage.tsx`       |
+| Application Tracker — kanban board             | `POST/GET/PATCH/DELETE /api/applications`, `application_service.py`, `TrackerPage.tsx` |
+| Shared "Track this job" modal                  | `AddApplicationModal.tsx` (used by ResumeUpload, JobRanker, TrackerPage)    |
 
 ## What's Next
 
 | Feature                       | Notes                                                                          |
 | ----------------------------- | ------------------------------------------------------------------------------ |
-| PostgreSQL                    | Proper files table with user_id FK; move off resume_history rows               |
-| Multi-agent job ranking       | Parallel fan-out — score multiple JDs simultaneously via asyncio.gather()      |
-| Multi-agent application intel | Sequential pipeline: researcher → resume optimizer → interview strategist      |
-| MCP integrations              | LinkedIn JD fetch, GitHub MCP for deeper profile analysis beyond current OAuth |
+| PostgreSQL files table        | Proper `files` table with `user_id` FK for listing uploads outside `resume_files`/`resume_analyses` |
+| LinkedIn MCP                  | Fetch real JD text from LinkedIn URLs — blocked on LinkedIn's anti-scraping posture, no public MCP server exists yet |
+| Email-parsing automation      | Stretch goal on the Application Tracker — auto-detect status changes (interview invites, rejections, offers) from a connected inbox |
 
 ---
 
@@ -1272,7 +1439,7 @@ Navigate to History:
 
 **"Could this scale?"**
 
-> "Two things to swap: ChromaDB for Pinecone or pgvector — needed because ChromaDB requires a persistent filesystem and serverless platforms don't provide one. And a proper files table in Postgres with user_id as a foreign key. Everything else — Supabase, Groq — is already cloud-native. Both swaps are single-file changes by design."
+> "The main thing to swap is ChromaDB for Pinecone or pgvector — needed because ChromaDB requires a persistent filesystem and serverless platforms don't provide one. Everything else — Supabase Storage for files, Postgres tables keyed by user_id, Groq — is already cloud-native. That swap is a single-file change by design, isolated to `embedder_service.py`."
 
 **"How does auth work?"**
 
@@ -1289,3 +1456,82 @@ Navigate to History:
 **"Why INSERT instead of UPDATE for history rows?"**
 
 > "A user might analyze the same resume against five different job descriptions. UPDATE would silently overwrite the previous score. INSERT gives you a full history. The tradeoff is the table grows, but each row is tiny — it's the right call for this use case."
+
+---
+
+## Behavioral Interview Questions — STAR Answers
+
+Use the **STAR** structure (Situation, Task, Action, Result) and keep each answer to roughly 60-90 seconds out loud. The project-grounded answers below use real decisions from this codebase — they hold up if an interviewer asks a follow-up, because they're describing what actually happened, not a story built to fit the question. The two teamwork/conflict questions at the end are flagged because this was a solo project — swap in a real example from a job, group project, or internship, using the same STAR skeleton.
+
+### "Tell me about a challenging technical problem you solved."
+
+> **Situation:** GitHub OAuth login worked fine when I tested it, but I noticed it silently broke depending on which URL I happened to open the app from.
+> **Task:** I needed to figure out why the same login flow succeeded from one address and failed from another, since a flaky auth flow would be a dealbreaker for real users.
+> **Action:** I traced it to something non-obvious: `localhost:5173` and `127.0.0.1:5173` are the same server but different browser origins, so localStorage — where the Supabase session lives — doesn't carry over between them. If the OAuth callback hardcoded a redirect to `localhost` but the user had started from `127.0.0.1`, the session was invisible after redirect and they'd land back on a login screen with no error message at all. I fixed it by reading the actual `Origin` header off the initial `/connect` request, encoding it into the OAuth `state` parameter alongside the user ID, and signing that payload with HMAC-SHA256 so it couldn't be tampered with. The callback decodes and verifies the signature, then redirects back to whichever exact origin the user came from.
+> **Result:** Both `localhost` and `127.0.0.1` — and by extension any deployed domain — work correctly with zero hardcoded URLs anywhere in the flow. It also taught me to test auth flows from more than one entry point, since this kind of bug produces no error, no log line, and no crash — just a user who silently gets logged out.
+
+### "Tell me about a time you had to learn something new quickly and apply it."
+
+> **Situation:** I wanted to add a multi-step "Job Recon" feature — research a company from its job posting, then use that research to rewrite resume bullets, then generate interview questions — where each step genuinely depends on the last one's output.
+> **Task:** I'd only built single-call LLM features up to that point. I needed a way to model an explicit multi-step pipeline with shared state, rather than three functions called back-to-back with parameters threaded through by hand.
+> **Action:** I learned LangGraph specifically for this — a graph-based framework for orchestrating multi-step LLM workflows. I modeled the pipeline as a `StateGraph` with one shared, typed state object (`AppIntelState`) that each of the three nodes reads from and writes into, wired `START → researcher → optimizer → strategist → END`, and used `astream()` to get each node's output the moment it finished, which I forward to the frontend as Server-Sent Events so the UI renders each card as it's ready instead of waiting for all three calls to finish.
+> **Result:** The pipeline works, streams incrementally, and — because I used the same shared-state pattern rather than passing individual variables between three separate functions — it's straightforward to extend with a fourth node or a conditional branch later without restructuring anything. It also gave me a clear mental model for when a full orchestration framework is worth reaching for versus when plain functions are enough (I made the opposite call for the Job Ranker feature, which is why it uses plain `asyncio` instead — see the multi-agent talking points above).
+
+### "Tell me about a tradeoff you had to make under constraints."
+
+> **Situation:** Every part of this app — the LLM, the embeddings, the vector store — had a "free and simple" option and a "paid and more scalable" option, and I was building it solo without production traffic yet.
+> **Task:** I had to pick defaults that let me move fast and validate the product without accumulating cost or infrastructure I didn't need yet, but without backing myself into a corner.
+> **Action:** I chose Groq over OpenAI (free tier, extremely fast inference on their custom LPU hardware, good-enough quality with Llama 3.3 70B), local `sentence-transformers` embeddings over an embeddings API (free, keeps resume PII on the server, one-time 90MB model download), and ChromaDB over Pinecone (zero setup, SQLite-backed, runs on the same machine). The one architectural rule I enforced throughout was that every one of these is isolated to a single service file — `llm_service.py` owns the LLM provider, `embedder_service.py` owns the vector store — so route handlers and the frontend never know which provider is running underneath.
+> **Result:** I got a fully working product with zero infrastructure cost while building it. And because of that isolation rule, I know exactly what it costs to move to production-grade providers later: it's a one- or two-file change per swap, not a rewrite. The tradeoff I accepted knowingly is that ChromaDB's local-disk dependence means it won't work as-is on a serverless platform like Vercel — that's a known, explicit limitation, not a surprise I'd discover later.
+
+### "Tell me about a mistake you made and what you learned from it."
+
+> **Situation:** I initially modeled resume history as one flat Supabase table — a single row type doing double duty as both "a file was uploaded" (score left null) and "a score was recorded" (score populated), grouped into a nested structure in Python after fetching.
+> **Task:** As I added features — deleting individual scores, showing an upload with zero analyses yet — the null-sentinel design started producing awkward edge cases, and the grouping logic in `history_service.py` was doing work that really belonged in the database.
+> **Action:** I recognized the design was fighting me rather than helping, so I migrated to two properly related tables — `resume_files` and `resume_analyses` — with a real foreign-key join, replacing Python-side grouping with a single Supabase query using `.select("file_id, filename, uploaded_at, resume_analyses(...)")`.
+> **Result:** Every upload row now means exactly one thing, an upload with no analyses yet just returns an empty nested list instead of needing a null-score placeholder row, and the deletion logic got simpler because there's no ambiguity about which row means what. The lesson I took from it: when I catch myself writing "if score is null, treat this row as X, otherwise treat it as Y" — that's usually a sign the data model needs two tables, not clever branching in the service layer.
+
+### "Tell me about a time you had to debug something without a clear error message."
+
+> **Situation:** Voice-recorded interview answers worked perfectly in Chrome during testing, but early on I knew Safari support would be flaky since browsers don't agree on audio recording formats.
+> **Task:** I needed transcription to work across Chrome, Safari, and Firefox without the user ever noticing a difference, despite each browser producing a different audio container format from `MediaRecorder`.
+> **Action:** Rather than picking one format and hoping, I used `MediaRecorder.isTypeSupported()` to detect the best available MIME type per browser at record time — `audio/webm;codecs=opus` for Chrome, `audio/mp4` for Safari, `audio/ogg` for Firefox — and made the backend strip the codec suffix before handing the bytes to Groq's Whisper model, which accepts all three underlying formats.
+> **Result:** Voice answers transcribe correctly regardless of which browser a candidate happens to be using, with no separate code path per browser beyond the one feature-detection call. It reinforced a habit: for anything touching browser media APIs, assume the three major engines will disagree, and design the detection in from the start rather than patching it in after a bug report.
+
+### "Tell me about a project you're proud of and why."
+
+> **Situation:** I built HireReady end-to-end, solo — a resume/interview copilot that scores a resume against a job description, generates tailored interview questions, and runs an adaptive mock interview.
+> **Task:** Beyond making individual features work, I wanted the codebase itself to hold up: swappable providers, thin route handlers, real separation between RAG, single-agent, and multi-agent patterns rather than blurring them together.
+> **Action:** I held to one architectural rule throughout — every external dependency (LLM provider, vector store, file storage, auth) is isolated to exactly one service file, so route handlers never know which provider is running. I used that same discipline to deliberately build three different agentic patterns as the app grew: RAG for the core ATS scoring, a single Groq tool-calling agent for the adaptive mock interview, and two different multi-agent orchestration styles — fan-out with plain `asyncio` for the parallel Job Ranker, and a LangGraph `StateGraph` pipeline for the sequential Job Recon flow — picking the simplest tool that fit each problem's actual data dependencies instead of using one framework everywhere.
+> **Result:** The app does something genuinely useful — I use it myself when applying to jobs — and the architecture means I can point to exactly why each technical decision was made, not just that it works. That's the version of "proud of" that matters to me: not just shipping features, but being able to defend every choice under questioning.
+
+### "How do you prioritize when scope is ambiguous or time is limited?"
+
+> **Situation:** Building solo meant every feature decision was mine to make, and there was no shortage of directions to take the product — LinkedIn integration, more agent patterns, deeper GitHub analysis.
+> **Task:** I had to decide what to build now versus defer, without a product manager setting priorities for me.
+> **Action:** I used a simple test: build the core RAG loop (upload → analyze → interview prep) fully first, since nothing else matters if the baseline product doesn't work well. Then I looked at what would meaningfully differentiate the product versus what was interesting-but-marginal. LinkedIn JD fetching is a good example of a deliberate no for now — I looked into it, found LinkedIn actively blocks automated access and no public MCP server exists for it, and rather than sinking time into a scraper that would break constantly, I documented it as explicitly blocked and moved on to the Application Tracker, which had a clear, buildable path and immediate user value.
+> **Result:** The features that shipped — mock interview agent, Job Ranker, Job Recon, the tracker — all work reliably because I didn't split focus chasing a low-feasibility integration. Recognizing "this is technically interesting but low-probability of paying off soon" as a reason to deprioritize, rather than a challenge to power through, is something I actively practice.
+
+### "Tell me about a time you disagreed with an approach and changed direction."
+
+*(Framed here as disagreeing with my own earlier decision — swap in a real disagreement with a teammate or manager if you have one, using the same STAR shape.)*
+
+> **Situation:** My first instinct for job scoring was to let a user paste one job description at a time and score it. As I used the app more myself, I realized most job searches involve comparing several postings at once, and the one-at-a-time flow didn't match how people actually job hunt.
+> **Task:** I had to decide whether to keep pushing on making the single-JD flow better, or invest in a different flow entirely for comparing multiple jobs at once.
+> **Action:** I built the Job Ranker as a genuinely different flow rather than bolting "compare mode" onto the existing single-JD UI — it takes 2-5 URLs, fetches and scores each one independently in parallel, and streams ranked results back as each one finishes. That meant writing a second scoring code path, but one that reuses `jd_fetcher_service` and `analyze_resume` rather than duplicating logic.
+> **Result:** The two flows now serve different real use cases — deep analysis against one target job versus fast comparison across several — instead of one compromised flow trying to do both. The reused service functions meant the second flow only added an `asyncio` fan-out layer, not a parallel scoring implementation.
+
+### "Tell me about a time you had a conflict with a coworker or teammate."
+
+*(This project was built solo, so there's no real example here — bring a genuine one from a job, internship, or group project. Use this skeleton: **Situation** — what was the disagreement and why did it arise (different priorities, different read on requirements, different technical opinions)? **Task** — what did you need to resolve, and by when? **Action** — how did you engage the other person: did you ask questions before asserting your view, propose a small test/prototype to settle it empirically, escalate, or compromise? **Result** — what actually got decided, and what did you learn about how you handle disagreement. Interviewers are listening for whether you engaged the disagreement directly and respectfully, not whether you "won.")*
+
+### "Tell me about a time you received critical feedback."
+
+*(Also best answered with a real example — a code review, a manager's note, a professor's critique. Use the same skeleton: **Situation/Task** — what was the feedback and what was it responding to? **Action** — your first reaction (defensive instincts are normal — did you take a beat before responding?), then what you actually changed. **Result** — the outcome, and specifically what you'd do differently next time given that feedback. If you're short on examples, a legitimate one for this project: a friend or classmate might have suggested the ATS scoring prompt was too strict on entry-level roles — describe how you'd validate that by testing edge-case resumes against the prompt before deciding whether to loosen it.)*
+
+### "Why does this project matter to you? / Why are you interested in this kind of work?"
+
+> **Situation:** Job searching is genuinely opaque from the applicant's side — you have no idea if an ATS is filtering you out, no idea what a specific company actually wants beyond the JD's buzzwords, and generic interview prep doesn't address the role you're actually interviewing for.
+> **Task:** I wanted to build something that gives a candidate the same kind of insight a well-connected friend at the company might give them — informally: here's what they likely care about, here's how your resume reads against this specific posting, here's what they'll probably ask and why.
+> **Action:** That's the thread running through every feature — the ATS scoring doesn't just match keywords, it also checks stated qualifications like years of experience or degree deadlines; Job Recon explicitly reverse-engineers what a company's JD implies about their priorities before generating anything; the mock interview agent probes vague answers with a follow-up instead of just moving on, the way a real interviewer would.
+> **Result:** It's the project I keep extending because I keep finding uses for it myself, which is the best signal that it's solving a real problem and not just a portfolio exercise.
