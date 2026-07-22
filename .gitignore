@@ -225,3 +225,7 @@ dist/
 .DS_Store
 uploads/
 backend/chroma_db/
+
+# frontend/src/lib is app source, not Python's lib/ build dir
+!frontend/src/lib/
+!frontend/src/lib/**
