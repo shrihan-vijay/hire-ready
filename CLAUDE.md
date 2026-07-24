@@ -16,7 +16,7 @@ An AI Resume & Interview Copilot — a full-stack app for tailoring resumes to j
 - python-multipart for file uploads
 - pdfplumber + python-docx for parsing
 - sentence-transformers (`all-MiniLM-L6-v2`) for local embeddings (lazy singleton, ~90MB one-time download)
-- ChromaDB (SQLite-backed) for vector storage at `backend/chroma_db/`
+- Supabase Postgres + pgvector (`resume_chunks` table, `match_resume_chunks` RPC) for vector storage — replaced local ChromaDB, which lost all embeddings on every Render container restart/redeploy
 - Groq API (`llama-3.3-70b-versatile`) for ATS scoring, interview question generation, feedback, and chatbot streaming
 - Groq Whisper (`whisper-large-v3`) for voice answer transcription
 - Supabase for auth (JWT) + relational storage (`resume_files`, `resume_analyses`, `job_applications` tables) + file storage (`resumes` bucket)
@@ -138,6 +138,15 @@ missing_skills jsonb
 jd_snippet     text (first 300 chars of JD)
 summary        text (Groq-generated plain-English summary)
 analyzed_at    timestamptz
+
+-- resume_chunks (resume text chunks + embeddings, replaces local ChromaDB)
+id            bigint primary key generated always as identity
+file_id       text
+filename      text
+chunk_index   int
+content       text
+embedding     vector(384)  -- pgvector, matches all-MiniLM-L6-v2 output dim
+created_at    timestamptz
 
 -- job_applications (application tracker)
 id            uuid primary key default gen_random_uuid()
