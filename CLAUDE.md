@@ -44,7 +44,7 @@ backend/app/
     resume_service.py      # Orchestrates: validate → upload to Supabase Storage → parse → chunk → embed
     parser_service.py      # Extracts text from PDF/DOCX via BytesIO (no disk writes)
     chunker_service.py     # Overlapping 200-word windows (40-word overlap)
-    embedder_service.py    # Embeds chunks, stores/queries ChromaDB; delete_chunks()
+    embedder_service.py    # Embeds chunks, stores/queries Supabase pgvector; delete_chunks()
     llm_service.py         # Groq: ATS scoring + is_valid_job_description() shared validator
     interview_service.py   # Groq: question generation, feedback, Whisper transcription
     mock_interview_service.py  # Agent loop: session state, Groq tool calling, debrief generation
@@ -100,7 +100,7 @@ frontend/src/
 
 ## Architectural Principle
 
-Every concern is isolated to one service file. Swap S3 for local disk → change only `resume_service.py`. Swap Pinecone for ChromaDB → change only `embedder_service.py`. Swap OpenAI for Groq → change only `llm_service.py` and `interview_service.py`. Route handlers never know which storage/LLM provider is running.
+Every concern is isolated to one service file. Swap S3 for local disk → change only `resume_service.py`. Swap pgvector for Pinecone → change only `embedder_service.py`. Swap OpenAI for Groq → change only `llm_service.py` and `interview_service.py`. Route handlers never know which storage/LLM provider is running.
 
 ## Development Workflow
 
@@ -169,10 +169,10 @@ updated_at    timestamptz
 
 ### Backend
 - `GET /api/health` — health check
-- `POST /api/resume/upload` — validates PDF/DOCX ≤5 MB, uploads to Supabase Storage (`resumes` bucket), parses bytes via BytesIO (no disk writes), chunks, embeds into ChromaDB; returns `{ filename, file_id, word_count, sections }`
-- `POST /api/resume/analyze` — takes `{ file_id, job_description }`, validates JD (20-word minimum + semantic check via `is_valid_job_description`), queries ChromaDB, calls Groq; returns `{ score, matched_skills, missing_skills, qualification_gaps, summary }`; saves to `resume_history` via INSERT
+- `POST /api/resume/upload` — validates PDF/DOCX ≤5 MB, uploads to Supabase Storage (`resumes` bucket), parses bytes via BytesIO (no disk writes), chunks, embeds into Supabase pgvector; returns `{ filename, file_id, word_count, sections }`
+- `POST /api/resume/analyze` — takes `{ file_id, job_description }`, validates JD (20-word minimum + semantic check via `is_valid_job_description`), queries Supabase pgvector, calls Groq; returns `{ score, matched_skills, missing_skills, qualification_gaps, summary }`; saves to `resume_history` via INSERT
 - `GET /api/resume/history` — requires auth; returns `ResumeFile[]` grouped by file_id with nested `AnalysisEntry[]`, newest-first
-- `DELETE /api/resume/history/{file_id}` — requires auth; deletes all Supabase rows + ChromaDB chunks for that file
+- `DELETE /api/resume/history/{file_id}` — requires auth; deletes all Supabase rows + pgvector chunks for that file
 - `DELETE /api/resume/history/{file_id}/score?at=<timestamp>` — requires auth; deletes a single analysis row by `file_id + uploaded_at` composite key
 - `POST /api/resume/fetch-jd` — takes `{ url }`, fetches job description text from any URL; tries direct HTTP with browser-like headers first, falls back to Jina Reader for JS-rendered pages; returns `{ text, title }`
 - `POST /api/interview/questions` — takes `{ file_id?, job_description }`, validates JD (20-word minimum only — semantic check removed to avoid false rejections on URL-fetched JDs), retrieves resume chunks, calls Groq; returns 8 questions (4 behavioral + 4 technical)
@@ -180,7 +180,7 @@ updated_at    timestamptz
 - `POST /api/interview/transcribe` — takes audio file (multipart), calls Groq `whisper-large-v3`; returns `{ text }`; supports `audio/mp4` (Safari), `audio/webm` (Chrome), `audio/ogg` (Firefox)
 - `POST /api/mock-interview/start` — takes `{ job_description, file_id? }`, generates 5 questions (3 behavioral + 2 technical, interleaved), stores session in memory, returns first question + `session_id`
 - `POST /api/mock-interview/answer` — takes `{ session_id, answer }`, runs one agent loop iteration via Groq tool calling; returns one of: `{ type: "followup", followup }` | `{ type: "next_question", question, question_number, total_questions }` | `{ type: "debrief", debrief }`
-- `POST /api/chat/` — takes `{ messages, file_id?, job_description? }`, queries ChromaDB for resume context, streams Groq response as SSE (`data: {"token": "..."}` then `data: [DONE]`)
+- `POST /api/chat/` — takes `{ messages, file_id?, job_description? }`, queries Supabase pgvector for resume context, streams Groq response as SSE (`data: {"token": "..."}` then `data: [DONE]`)
 - `GET /api/github/connect` — starts GitHub OAuth; encodes frontend `Origin` header into HMAC-signed state so callback redirects to the exact host (fixes localhost vs 127.0.0.1 split)
 - `GET /api/github/callback` — verifies HMAC state, exchanges code for token, saves to Supabase, redirects to origin `/home?github=connected`
 - `POST /api/resume/rank-jobs` — takes `{ file_id?, urls: string[] }` (2–5 URLs), fires one scoring pass per URL concurrently via `asyncio.gather()`, streams each result as SSE as it completes; returns per-job `{ url, title, ok, score, matched_skills, missing_skills, summary, jd_snippet }`
@@ -206,8 +206,8 @@ updated_at    timestamptz
   - **Question Bank**: two sub-tabs — Behavioral (15 hardcoded questions across 5 categories, one-by-one default) and Role-Specific (auto-generates from JD + resume via Groq, one-by-one default); switching to Question Bank with a pre-loaded JD auto-navigates to Role-Specific sub-tab and triggers generation
   - Both tabs support voice recording: `VoiceMicButton` uses `MediaRecorder` → POSTs to `/api/interview/transcribe` → transcript appends to answer
   - AI feedback per answer (honest coaching, bans hollow praise, STAR format guidance)
-- History page: accordion list of uploaded resumes (newest first); click to expand → see all ATS scores; each analysis shows score badge, date, "View summary" toggle (Groq summary), skill chips, "Prep interview" button; per-score trash icon with inline confirmation; full-resume trash icon with confirmation; deletes Supabase rows + ChromaDB chunks
-- Chatbot: floating widget bottom-right (`ChatBot.tsx`); indigo/purple FAB; expandable panel with SSE streaming; auto-injects `file_id` (RAG via ChromaDB) and `jd` from `ResumeContext`; auth token from `useAuth().session`; when no resume loaded, directs user to upload rather than asking them to paste; visible to authed + guest users on all non-auth pages
+- History page: accordion list of uploaded resumes (newest first); click to expand → see all ATS scores; each analysis shows score badge, date, "View summary" toggle (Groq summary), skill chips, "Prep interview" button; per-score trash icon with inline confirmation; full-resume trash icon with confirmation; deletes Supabase rows + pgvector chunks
+- Chatbot: floating widget bottom-right (`ChatBot.tsx`); indigo/purple FAB; expandable panel with SSE streaming; auto-injects `file_id` (RAG via Supabase pgvector) and `jd` from `ResumeContext`; auth token from `useAuth().session`; when no resume loaded, directs user to upload rather than asking them to paste; visible to authed + guest users on all non-auth pages
 - "How it works" interactive 4-step stepper section (Step 2: matched/missing skill chips; Step 4: AI feedback coaching)
 - ATS score guide section (4 range cards: 0-40 red, 41-60 amber, 61-79 blue, 80-100 green)
 - Profile page: email + sign out for logged-in users; sign-in/sign-up form for guests
