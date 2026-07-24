@@ -27,7 +27,7 @@
 
 **Frontend:** React + TypeScript, Vite, React Router v7, React Context, axios
 
-**Backend:** FastAPI, pdfplumber/python-docx for parsing, sentence-transformers + ChromaDB for embeddings/RAG, Groq (`llama-3.3-70b-versatile` + Whisper) for LLM features, Supabase for auth/storage/data, LangGraph for the Job Recon pipeline, GitHub MCP server for profile enrichment
+**Backend:** FastAPI, pdfplumber/python-docx for parsing, sentence-transformers + Supabase pgvector for embeddings/RAG, Groq (`llama-3.3-70b-versatile` + Whisper) for LLM features, Supabase for auth/storage/data, LangGraph for the Job Recon pipeline, GitHub MCP server for profile enrichment
 
 See `CLAUDE.md` for the full architecture, folder structure, and API reference.
 
