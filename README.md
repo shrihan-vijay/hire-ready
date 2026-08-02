@@ -22,6 +22,7 @@
 - **Application Tracker** — a kanban board (Saved/Applied/Interviewing/Offer/Rejected) for jobs you're pursuing
 - **Chatbot** — a floating assistant with RAG context over your resume and the job description
 - **GitHub enrichment** — optionally connect GitHub so scoring factors in your public profile/repos
+- **Accessibility** — dialog semantics and focus trapping on modals, ARIA live regions on the streaming chatbot, and a keyboard-operable alternative to drag-and-drop on the kanban tracker
 
 ## Stack
 

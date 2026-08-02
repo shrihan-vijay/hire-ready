@@ -74,7 +74,7 @@ export default function TrackerPage() {
       <div className="tr-header">
         <div>
           <h1 className="tr-title">Application Tracker</h1>
-          <p className="tr-subtitle">Drag a card to update its status.</p>
+          <p className="tr-subtitle">Drag a card, or use its status menu, to update its status.</p>
         </div>
         <button className="tr-add-btn" onClick={() => setShowAdd(true)}>
           <Plus size={14} /> Add application
@@ -104,19 +104,23 @@ export default function TrackerPage() {
                   const id = e.dataTransfer.getData('text/plain')
                   if (id) void moveStatus(id, col.key)
                 }}
+                role="region"
+                aria-label={`${col.label} column, ${cards.length} application${cards.length === 1 ? '' : 's'}`}
               >
                 <div className="tr-column-header">
                   <span>{col.label}</span>
                   <span className="tr-column-count">{cards.length}</span>
                 </div>
 
-                <div className="tr-column-cards">
+                <div className="tr-column-cards" role="list">
                   {cards.map((app) => (
                     <div
                       key={app.id}
                       className="tr-card"
                       draggable
                       onDragStart={(e) => e.dataTransfer.setData('text/plain', app.id)}
+                      role="listitem"
+                      aria-label={`${app.company_name}, ${app.job_title}`}
                     >
                       <div className="tr-card-top">
                         <p className="tr-card-company">{app.company_name}</p>
@@ -127,8 +131,25 @@ export default function TrackerPage() {
                       <p className="tr-card-title">{app.job_title}</p>
                       {app.notes && <p className="tr-card-notes">{app.notes}</p>}
                       <div className="tr-card-actions">
+                        <label className="tr-card-move">
+                          <span className="sr-only">Move {app.company_name} to a different status</span>
+                          <select
+                            value={app.status}
+                            onChange={(e) => void moveStatus(app.id, e.target.value as Status)}
+                          >
+                            {COLUMNS.map((c) => (
+                              <option key={c.key} value={c.key}>{c.label}</option>
+                            ))}
+                          </select>
+                        </label>
                         {app.job_url && (
-                          <a href={app.job_url} target="_blank" rel="noreferrer" className="tr-card-link">
+                          <a
+                            href={app.job_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="tr-card-link"
+                            aria-label={`Open job listing for ${app.job_title} at ${app.company_name}`}
+                          >
                             <ExternalLink size={12} />
                           </a>
                         )}
@@ -139,7 +160,11 @@ export default function TrackerPage() {
                             <button onClick={() => setConfirmDelete(null)}>No</button>
                           </div>
                         ) : (
-                          <button className="tr-card-delete" onClick={() => setConfirmDelete(app.id)}>
+                          <button
+                            className="tr-card-delete"
+                            onClick={() => setConfirmDelete(app.id)}
+                            aria-label={`Delete application for ${app.job_title} at ${app.company_name}`}
+                          >
                             <Trash2 size={12} />
                           </button>
                         )}

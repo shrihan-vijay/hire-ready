@@ -1043,6 +1043,10 @@ The next step for production would be adding a proper `files` table with `user_i
 
 > FastAPI has async support out of the box — critical for LLM API calls that take several seconds. Pydantic handles request validation automatically (wrong shape → 422, no manual checks). Auto-generated OpenAPI docs at `/docs`. Django is overkill for an API-first backend; Flask requires wiring Pydantic and async manually.
 
+**"Tell me about a time you improved accessibility in a project."**
+
+> I did a pass over three components in this app after noticing they'd only ever been tested with a mouse. The application-tracking modal had `<label>` elements that weren't actually linked to their inputs via `htmlFor`/`id`, so a screen reader had no idea which field was focused — an easy miss because it looks correct visually. I also added proper `role="dialog"`/`aria-modal` semantics, an Escape key handler, and a focus trap so keyboard focus can't tab out to the page behind the modal. Separately, the floating chatbot streams tokens in over SSE, and none of that was announced to screen reader users — I added `role="log"` with `aria-live="polite"`, which is the ARIA role built specifically for chat transcripts. The kanban application tracker was the biggest gap: status changes were drag-and-drop only, so a keyboard-only user had no way to move a card at all. Rather than hand-rolling arrow-key drag semantics, I added a native `<select>` per card wired to the same `moveStatus()` handler the drag-and-drop already used — a `<select>` gets full keyboard and screen-reader support for free, and for a five-column board, jumping straight to a target status is arguably better UX than simulating a drag anyway.
+
 **"What is CORS and why do you need it?"**
 
 > CORS is a browser policy that blocks requests to a different origin than the page was loaded from. Frontend is on port 5173, backend on 8000 — different origins. FastAPI's `CORSMiddleware` adds `Access-Control-Allow-Origin` headers so the browser permits the cross-origin requests.
@@ -1253,6 +1257,7 @@ The result (top non-fork repos + decoded READMEs, forks filtered out, markdown s
 | Job Recon — sequential LangGraph pipeline      | `POST /api/app-intel/run`, `app_intel_service.py`, `AppIntelPage.tsx`       |
 | Application Tracker — kanban board             | `POST/GET/PATCH/DELETE /api/applications`, `application_service.py`, `TrackerPage.tsx` |
 | Shared "Track this job" modal                  | `AddApplicationModal.tsx` (used by ResumeUpload, JobRanker, TrackerPage)    |
+| Accessibility: dialog semantics, focus trap, live-region chat, keyboard-operable kanban | `AddApplicationModal.tsx`, `ChatBot.tsx`, `TrackerPage.tsx` |
 
 ## What's Next
 
@@ -1261,6 +1266,27 @@ The result (top non-fork repos + decoded READMEs, forks filtered out, markdown s
 | PostgreSQL files table        | Proper `files` table with `user_id` FK for listing uploads outside `resume_files`/`resume_analyses` |
 | LinkedIn MCP                  | Fetch real JD text from LinkedIn URLs — blocked on LinkedIn's anti-scraping posture, no public MCP server exists yet |
 | Email-parsing automation      | Stretch goal on the Application Tracker — auto-detect status changes (interview invites, rejections, offers) from a connected inbox |
+
+---
+
+## Accessibility (a11y)
+
+**What "accessible" means:** code that works for people using assistive technology — screen readers, keyboard-only navigation, voice control — not just a mouse and a monitor. The standard reference is WCAG, organized around four principles (POUR): **P**erceivable (information isn't conveyed by color or icon shape alone), **O**perable (everything reachable by keyboard, not just drag/click), **U**nderstandable (labels, predictable behavior, clear errors), **R**obust (semantic HTML/ARIA parses correctly in assistive tech instead of reading as an unlabeled blob).
+
+**What was audited and fixed in this app** (a first pass, not a full audit — see below):
+
+| Gap found | Fix | Where |
+| --- | --- | --- |
+| Modal `<label>` elements weren't linked to their inputs — a screen reader couldn't announce which field was focused | `htmlFor`/`id` pairs on every field | `AddApplicationModal.tsx` |
+| Modal had no dialog semantics, no keyboard-driven close, no focus containment | `role="dialog"`, `aria-modal`, `aria-labelledby` pointing at the heading, Escape-to-close, a Tab/Shift+Tab focus trap so tabbing can't escape to the page behind it | `AddApplicationModal.tsx` |
+| Chatbot responses streamed in token-by-token with nothing announced to screen reader users | `role="log"` + `aria-live="polite"` on the message list so new content is announced as it arrives; the three-dot typing indicator got `aria-hidden` plus hidden text ("AI is typing a response") so it isn't silently meaningless | `ChatBot.tsx` |
+| Kanban board status changes were drag-and-drop only — no way to move a card without a mouse | Added a native `<select>` per card, wired to the same `moveStatus()` handler drag-and-drop already uses; columns/cards got `role="region"` / `role="list"` / `role="listitem"` with descriptive `aria-label`s; icon-only buttons (delete, open job link) got `aria-label`s | `TrackerPage.tsx` |
+
+**Why a native `<select>` instead of custom keyboard shortcuts for the kanban board?** A `<select>` is accessibility for free — every screen reader and OS already knows how to operate one. Hand-rolling arrow-key drag semantics would mean re-implementing (and re-testing) keyboard interaction patterns the browser already provides, for a five-column board where "jump straight to a status" is arguably a *better* interaction than simulating a drag with arrow keys.
+
+**Why `role="log"` specifically for the chatbot, not just `aria-live="polite"` on a `<div>`?** `role="log"` is the ARIA role the WAI-ARIA Authoring Practices define specifically for a stream of messages where new content is appended and old content stays meaningful — a chat transcript is the textbook case. It implies polite live-region behavior on its own; pairing it with an explicit `aria-live="polite"` and `aria-relevant="additions text"` makes that behavior explicit instead of relying on a given screen reader's default interpretation of the bare role.
+
+**What this pass didn't cover:** this was three targeted fixes (the modal, the chatbot, the kanban board), not a full WCAG audit. Untouched areas likely still have gaps — e.g. the ATS score ring conveys score bands (green/amber/red) by color, which needs a text-equivalent check; drag-and-drop file upload zones and other modals/menus in the app haven't been audited for the same dialog/focus-trap issues found in `AddApplicationModal.tsx`.
 
 ---
 
