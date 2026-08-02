@@ -135,7 +135,13 @@ export function ChatBot() {
             </button>
           </div>
 
-          <div className="chatbot-messages">
+          <div
+            className="chatbot-messages"
+            role="log"
+            aria-live="polite"
+            aria-relevant="additions text"
+            aria-busy={streaming}
+          >
             {messages.map((msg, i) => (
               <div key={i} className={`chatbot-msg chatbot-msg--${msg.role}`}>
                 <p className="chatbot-msg-text">{msg.content}</p>
@@ -143,9 +149,10 @@ export function ChatBot() {
             ))}
             {streaming && messages[messages.length - 1].content === '' && (
               <div className="chatbot-msg chatbot-msg--assistant">
-                <div className="chatbot-typing">
+                <div className="chatbot-typing" aria-hidden="true">
                   <span /><span /><span />
                 </div>
+                <span className="sr-only">AI is typing a response</span>
               </div>
             )}
             <div ref={messagesEndRef} />
